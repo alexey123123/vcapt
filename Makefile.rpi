@@ -1,0 +1,52 @@
+PREFIX=arm-rpi-linux
+CC=$(PREFIX)-gcc
+CXX=$(PREFIX)-g++
+STRIP=$(PREFIX)-strip
+SOURCES = camera.cpp capturer.cpp couchdb.cpp ffmpeg_encoder.cpp libav.cpp manager.cpp opencv_camera.cpp stream.cpp types.cpp v4l2_camera.cpp vcapt2.cpp rpi_openmax.cpp
+
+OBJECTS = $(SOURCES:.cpp=.o)
+TARGET = vcapt
+LDFLAGS="-Wl,-rpath,../../3party.src/rpi/lib"
+                                     
+CXXFLAGS+=-I ../../3party.src/boost
+CXXFLAGS+=-I ../opencv.arm/include
+CXXFLAGS+=-I ../../3party.src/couchdb++/include
+CXXFLAGS+=-I ../../3party.src/ffmpeg/linux/ffmpeg-2.1.3
+CXXFLAGS+=-I ../../include
+CXXFLAGS+=-I ../../3party.src/rpi/firmware-master/opt/vc/include
+CXXFLAGS+=-I ../../3party.src/rpi/firmware-master/opt/vc/src/hello_pi/libs
+
+CXXFLAGS+=-fPIC
+CXXFLAGS+=-D__STDC_CONSTANT_MACROS
+CXXFLAGS+=-DRPI
+LIBS += -L ../../3party.src/couchdb++ -lcouchdb++
+LIBS += -L ../../common/utility -lutility
+LIBS += -L ../../3party.src/rpi/lib
+LIBS += -lboost_program_options -lboost_system -lboost_thread -lboost_date_time -lboost_filesystem -lboost_chrono -lboost_atomic
+LIBS += -lcurl
+LIBS += -lopencv_highgui -lopencv_core
+LIBS += -pthread
+#LIBS += -L ../../3party.src/rpi/firmware-master/opt/vc/lib -lvcos -lopenmaxil -lbcm_host -lvchiq_arm
+
+LDFLAGS+=-L ../../3party.src/rpi/firmware-master/opt/vc/lib -lGLESv2 -lEGL -lopenmaxil -lbcm_host -lvcos -lvchiq_arm -lrt
+#LDFLAGS+=-L ../../3party.src/rpi/firmware-master/opt/vc/src/hello_pi/libs/ilclient -llibilclient.a
+LDFLAGS+=../../3party.src/rpi/firmware-master/opt/vc/src/hello_pi/libs/ilclient/libilclient.a
+
+.cpp.o:
+	${CXX} ${CXXFLAGS} ${LDFLAGS}  -c $< -o $@
+
+all: $(TARGET)
+
+$(TARGET): $(OBJECTS)
+	${CXX} $(OBJECTS) -o $(TARGET) $(LIBS) $(LDFLAGS)
+	  
+clean:
+	rm -f *.o $(TARGET)
+
+strip:
+	$(STRIP) $(TARGET)
+
+
+
+
+

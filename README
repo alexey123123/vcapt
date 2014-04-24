@@ -1,0 +1,6 @@
+Cross-platform utility for capturing video, encoding (mjpeg,VP8,H264) and streaming via network (http)
+
+Supported cameras: network(http mjpeg) and localy connected (v4l2,windows-compatible)
+Supported streams: mjpeg, webm/vp8, flv/h264
+
+
