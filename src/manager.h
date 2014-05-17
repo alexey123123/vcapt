@@ -14,10 +14,11 @@
 #include <utility/Options.h>
 
 #include "types.h"
-#include "stream.h"
 #include "couchdb.h"
-#include "opencv_camera.h"
-#include "v4l2_camera.h"
+#include "camera_opencv.h"
+#include "camera_v4l2.h"
+#include "camera_container.h"
+
 
 class manager{
 public:
@@ -28,7 +29,7 @@ public:
 	//network cameras docs scan
 	//wait incoming connections
 
-	void finalize_stream(stream* s);
+	void finalize_codec_processor(camera_container* _container, codec_processor* _processor);
 private:
 	couchdb::manager cdb_manager;
 	boost::asio::io_service internal_ioservice;
@@ -60,23 +61,14 @@ private:
 
 
 
-	struct camera_container{
-		
-		
-		camera* _camera;
-		std::deque<stream_ptr> streams;
 
-		camera_container();
-		~camera_container();
-	};
 	typedef boost::shared_ptr<camera_container> camera_container_ptr;
 	std::deque<camera_container_ptr> cameras;
 	void on_camera_finalize(std::string camera_id);
 
 
 
-	void i_thread_finalize_stream(stream* s);
-	stream_ptr get_stream(camera* cam, client_parameters& e_params, tcp_client_ptr c);
+	void i_thread_finalize_codec_processor(camera_container* _container, codec_processor* _processor);
 
 	void check_database_and_start_network_cams();
 };

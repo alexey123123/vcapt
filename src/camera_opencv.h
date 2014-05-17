@@ -5,11 +5,11 @@
 
 #include "camera.h"
 
-class opencv_camera: public camera{
+class camera_opencv: public camera{
 public:
-	opencv_camera(const std::string& _dev_name_or_doc_id, couchdb::manager* _cdb_manager,stop_handler _h,
+	camera_opencv(const std::string& _dev_name_or_doc_id, couchdb::manager* _cdb_manager,stop_handler _h,
 		bool _windows_internal_cam = true);
-	~opencv_camera();
+	~camera_opencv();
 
 protected:
 

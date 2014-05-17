@@ -203,6 +203,34 @@ bool capturer::format::check_framesize(const frame_size& fs) const{
 	return true;
 }
 
+
+std::deque<frame_size> capturer::format::get_possible_framesizes() const{
+	std::deque<frame_size> ret;
+
+	switch(type){
+	case fst_discrete:
+		return framesizes;
+	case fst_stepwise:{
+
+		if (check_framesize(frame_size(320,200)))
+			ret.push_back(frame_size(320,200));
+		if (check_framesize(frame_size(640,480)))
+			ret.push_back(frame_size(640,480));
+		if (check_framesize(frame_size(800,600)))
+			ret.push_back(frame_size(800,600));
+		if (check_framesize(frame_size(1024,768)))
+			ret.push_back(frame_size(1024,768));
+		if (check_framesize(frame_size(1280,720)))
+			ret.push_back(frame_size(1280,720));
+		if (check_framesize(frame_size(1920,1080)))
+			ret.push_back(frame_size(1920,1080));
+
+
+		}
+	}
+	return ret;
+}
+
 capturer::capabilities::capabilities():flags(0){
 
 }

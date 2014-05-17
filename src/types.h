@@ -7,6 +7,7 @@
 #include <boost/date_time/posix_time/ptime.hpp>
 #include <boost/chrono/chrono.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/optional.hpp>
 
 
 #include <opencv2/opencv.hpp>
@@ -17,8 +18,10 @@
 struct frame_size{
 	int width;
 	int height;
+	
 	frame_size():width(0),height(0){};
 	frame_size(int _width,int _height):width(_width),height(_height){};
+
 	const bool operator==(const frame_size& fs) const{
 		return (height==fs.height)&&(width==fs.width);
 	};
@@ -43,6 +46,7 @@ struct frame_size{
 
 	std::string to_string() const;
 	bool from_string(const std::string& s);
+	void from_string(const std::string& s,const frame_size& default_value);
 
 	operator bool() const{
 		return (width!=0)&&(height!=0);
@@ -55,25 +59,14 @@ struct __fs_sorter{
 	};
 };
 
-struct buffer{
-	std::vector<unsigned char> _data;
-	AVPacket* av_packet;
 
-	buffer();
-	buffer(AVPacket* p);
-	~buffer();
-
-	std::size_t size() const;
-	unsigned char* data();
-};
-typedef boost::shared_ptr<buffer> buffer_ptr;
 
 
 #define CLIENT_BUF_SIZE 1024
 struct tcp_client{
 	unsigned short port;
 	boost::asio::ip::tcp::socket _socket;
-	bool priority;
+	bool internal_client;
 	
 	
 	char recv_buffer[CLIENT_BUF_SIZE];
@@ -96,18 +89,42 @@ struct tcp_client{
 typedef boost::shared_ptr<tcp_client> tcp_client_ptr;
 
 struct client_parameters{
-	frame_size f_size; 
 	std::string container_name;
 	std::string codec_name;
-	int bitrate;
+	boost::optional<frame_size> f_size;
+	boost::optional<int> bitrate;
 
 
 	bool construct(tcp_client_ptr,std::string& error_message);
-	client_parameters():bitrate(0){};
+	client_parameters(){};
 	bool operator==(const client_parameters& e) const
 		{return (f_size==e.f_size)&&(bitrate==e.bitrate)&&(container_name==e.container_name)&&(codec_name==e.codec_name);};
 	bool operator!=(const client_parameters& e) const
 	{return !(e==*this);};
 };
+
+struct packet{
+	AVPacket p;
+	boost::chrono::steady_clock::time_point frame_tp;
+
+	packet();
+	~packet();
+};
+typedef boost::shared_ptr<packet> packet_ptr;
+
+struct buffer{
+	std::vector<unsigned char> _data;
+	packet_ptr _packet_ptr;
+
+	buffer();
+	buffer(packet_ptr p);
+	~buffer();
+
+	std::size_t size() const;
+	unsigned char* data();
+};
+typedef boost::shared_ptr<buffer> buffer_ptr;
+
+
 
 #endif//__types_h__

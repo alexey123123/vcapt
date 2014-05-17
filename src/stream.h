@@ -1,132 +1,140 @@
 #ifndef __stream_h__
 #define __stream_h__
 
-#include <deque>
-#include <memory>
+#include <queue>
 
-#include <boost/shared_ptr.hpp>
-#include <boost/system/error_code.hpp>
+#include <boost/filesystem/path.hpp>
+#include <boost/function.hpp>
+#include <boost/thread/recursive_mutex.hpp>
+#include <boost/thread/locks.hpp>
 
-
+#include "libav.h"
 #include "types.h"
-#include "camera.h"
-#include "ffmpeg_encoder.h"
-#include "filter.h"
-
-
-/*
-	- temp_connection (xxx.xxx.xxx.xxx/stream?type=xxx?id=xxx?fsize=xxx:xxx?)
-	- feed (		xxx.xxx.xxx.xxx/stream/xxxxxxxxxxxxx
-				xxx.xxx.xxx.xxx/pstream/xxxxxxxxxxxxx
-
-*/
-
-
-class manager;
 
 class stream{
 public:
 
-
-	struct parameters{
-		std::string codec_name;
-		std::string container_name;
-		ffmpeg_encoder::format encoder_format;
+	typedef boost::function<void (stream*)> stop_handler;
+	enum priority{
+		p_unknown			= 0,
+		p_user				= 10,
+		p_system_service	= 20,
+		p_save_to_file		= 30
 	};
 
-	stream(manager* _m, camera* _c,boost::shared_ptr<ffmpeg_encoder> e_ptr, const parameters& p);
-	~stream();
 
-
-	camera* get_camera()
-		{return _camera;};
-	ffmpeg_encoder* get_encoder()
-		{return _encoder_ptr.get();};
-	parameters& get_params()
-		{return _parameters;};
-
-	bool have_priority_clients();
-	bool have_clients();
+	stream(priority p, stop_handler sh);
+	virtual ~stream();
 
 
 
-	void add_new_tcp_client(tcp_client_ptr c);
-	void remove_tcp_client(tcp_client_ptr c);
+	void process_packet(packet_ptr p)
+		{do_process_packet(p);};
 
-	struct client{
-		tcp_client_ptr _tcp_client_ptr;
-		stream* _stream;
+	priority get_priority() const
+		{return _priority;};
+protected:
 
-		std::queue<buffer_ptr> buffers;
-		buffer_ptr current_buffer;
-		boost::mutex buffers_mutex;
-		std::vector<unsigned char>::size_type total_size;
-		void add_buffer(buffer_ptr b);
-		void send_first_buffer();
-		void write_data_handler(buffer_ptr bptr, boost::system::error_code,unsigned int bytes_transferred);
+	virtual void do_process_packet(packet_ptr p) = 0;
 
-		int sent_packets_count;
-		bool header_sended;
-
-		boost::system::error_code client_error_code;
-
-
-		bool mjpeg_answer_delivered;
-
-
-		client(stream* s,tcp_client_ptr c):
-		_tcp_client_ptr(c),
-			_stream(s),
-			total_size(0),sent_packets_count(0),
-			mjpeg_answer_delivered(false),
-			header_sended(false){};
-		~client();
-
-	};
-	typedef boost::shared_ptr<client> client_ptr;
-
-
-private:	
-	manager* _manager;
-	camera* _camera;
-	boost::shared_ptr<ffmpeg_encoder> _encoder_ptr;
-	parameters _parameters;
-
-	boost::asio::io_service internal_ioservice;
-	boost::shared_ptr<boost::asio::io_service::work> internal_ioservice_work_ptr;
-	boost::thread internal_thread;
-	void internal_thread_proc();
-
-	void do_stream_work(boost::system::error_code ec);
-	boost::asio::steady_timer work_timer;
-
-	void check_clients_and_finalize_stream(boost::system::error_code ec);
-	boost::asio::steady_timer check_clients_timer;
-
-	void do_fps_meter(boost::system::error_code ec);
-	boost::asio::steady_timer fps_meter_timer;
-	// Calculated values
-	uint64_t summary_encode_time_ms;
-	uint64_t maximum_encode_time_ms;
-	uint64_t minimum_encode_time_ms;
-	int encoded_frame_counter;
-	int encoder_fps;
-
-
-
-
-	std::deque<client_ptr> clients;
-	boost::mutex clients_mutex;
-	void i_thread_add_new_tcp_client(tcp_client_ptr c);
-	void i_thread_remove_tcp_client(tcp_client_ptr c);
-
-	void encoder_data_handler(buffer_ptr b);
-	boost::chrono::steady_clock::time_point last_frame_tp;
-
-	capturer::frame_ptr blank_frame;
-	std::map<capturer::state, filter_ptr> s_filters;
+	void call_stop_handler();
+private:
+	stop_handler _stop_handler;
+	priority _priority;
+	
 
 };
 typedef boost::shared_ptr<stream> stream_ptr;
+
+
+class network_stream_buffer{
+public:
+	typedef boost::function<void (network_stream_buffer*,boost::system::error_code)> stop_handler;
+	network_stream_buffer(tcp_client_ptr _tcptr,stop_handler _h, unsigned int max_buffer_size);
+	~network_stream_buffer();
+
+	void close();
+
+	void add_buffer(buffer_ptr b);
+
+private:
+	tcp_client_ptr tcptr;
+	stop_handler _stop_handler;
+	unsigned int _max_buffer_size;
+
+	std::queue<buffer_ptr> buffers;
+	buffer_ptr current_buffer;
+	boost::recursive_mutex buffers_mutex;
+	std::vector<unsigned char>::size_type total_size;
+
+	void send_first_buffer();
+	void write_data_handler(buffer_ptr bptr, boost::system::error_code,unsigned int bytes_transferred);
+	int sent_packets_count;
+	boost::system::error_code client_error_code;
+};
+
+#define STREAM_BUFFER_SIZE 100000
+class av_container_stream: public stream{
+public:
+
+	virtual ~av_container_stream();
+
+	static stream_ptr create_network_stream(const std::string& container_name, AVCodecContext* av_codec_context, stream::stop_handler sh,
+														tcp_client_ptr c);
+
+	
+//  TODO:
+// 	static stream_ptr create_file_stream(const std::string& container_name, AVCodec* av_codec, stop_handler sh,
+// 		const boost::filesystem::path& p,
+// 		boost::chrono::steady_clock::duration _max_duration,
+// 		boost::int64_t _max_filesize);
+
+
+
+	//network stream
+	int do_delivery_encoded_data(uint8_t *buf, int buf_size);
+protected:
+	void do_process_packet(packet_ptr p);
+private:
+	av_container_stream(priority p, stop_handler sh,tcp_client_ptr c);
+
+	AVFormatContext		*format_context;	
+	AVStream			*video_stream;
+	AVCodecContext*		fake_context;
+	boost::chrono::steady_clock::time_point stream_start_tp;
+
+	
+
+	void alloc_stream(const std::string& container_name, AVCodecContext* av_codec_context);
+
+	//file stream stuff
+	boost::filesystem::path file_path;
+	boost::chrono::steady_clock::duration max_duration;
+	boost::int64_t max_filesize;
+
+
+	//network stream stuff
+	unsigned char out_stream_buffer[STREAM_BUFFER_SIZE];
+
+	int64_t do_seek(int64_t offset, int whence);
+	network_stream_buffer nsb;
+	void nsb_finalize(network_stream_buffer* _nsb, boost::system::error_code ec);	
+
+	std::string get_http_ok_answer(const std::string& container_name);
+	bool kf_found;
+};
+
+class mjpeg_stream: public stream{
+public:
+	mjpeg_stream(stop_handler sh,tcp_client_ptr c);
+protected:
+	void do_process_packet(packet_ptr p);
+private:
+	network_stream_buffer nsb;
+	void nsb_finalize(network_stream_buffer* _nsb, boost::system::error_code ec);
+	std::string boundary_value;
+
+};
+
 
 #endif//__stream_h__

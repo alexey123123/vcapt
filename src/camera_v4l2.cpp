@@ -27,7 +27,7 @@
 #endif
 
 
-#include "v4l2_camera.h"
+#include "camera_v4l2.h"
 
 #define MAX_POSSIBLE_ERRORS 255
 //ограничение на кол-во буфферов 
@@ -217,7 +217,7 @@ bool do_stop_streaming(int fd, std::string& error_message){
 	return true;
 }
 
-v4l2_camera::v4l2_camera(const std::string& _dev_name_or_doc_id, couchdb::manager* _cdb_manager,stop_handler _h):
+camera_v4l2::camera_v4l2(const std::string& _dev_name_or_doc_id, couchdb::manager* _cdb_manager,stop_handler _h):
 		camera(c_local, _dev_name_or_doc_id,_cdb_manager,_h),
 		n_buffers(0),
 		dequeued_buffers_count(0),
@@ -227,7 +227,7 @@ v4l2_camera::v4l2_camera(const std::string& _dev_name_or_doc_id, couchdb::manage
 }
 
 
-v4l2_camera::~v4l2_camera(){
+camera_v4l2::~camera_v4l2(){
 	DoDisconnect();
 }
 
@@ -351,7 +351,7 @@ static inline std::string v4l2_pisxftm_fourcc_to_str(unsigned int v4l2_pixfmt){
 	return std::string(fourcc_ch);
 }
 
-bool v4l2_camera::try_enum_formats(std::deque<format>& _formats){
+bool camera_v4l2::try_enum_formats(std::deque<format>& _formats){
 
 #if defined(LinuxPlatform)
 	//вытаскиваем все поддерживаемые форматы и размеры изображения
@@ -460,14 +460,14 @@ bool v4l2_camera::try_enum_formats(std::deque<format>& _formats){
 
 }
 
-void v4l2_camera::DoDisconnect(){
+void camera_v4l2::DoDisconnect(){
 	boost::unique_lock<boost::recursive_mutex> l1(internal_mutex);
 	DoStopStreaming();
 
 	close_fd();
 }
 
-void v4l2_camera::DoConnect3(const capturer::connect_parameters& params){
+void camera_v4l2::DoConnect3(const capturer::connect_parameters& params){
 	#if defined(LinuxPlatform)
 
 	boost::unique_lock<boost::recursive_mutex> l1(internal_mutex);
@@ -654,14 +654,14 @@ void v4l2_camera::DoConnect3(const capturer::connect_parameters& params){
 
 }
 
-void v4l2_camera::close_fd(){
+void camera_v4l2::close_fd(){
 #if defined(LinuxPlatform)
 	close(fd);
 	fd=-1;
 #endif
 }
 
-void v4l2_camera::unmap_buffers(){
+void camera_v4l2::unmap_buffers(){
 #if defined(LinuxPlatform)
 
 	int i;
@@ -701,7 +701,7 @@ void v4l2_camera::unmap_buffers(){
 
 
 
-void v4l2_camera::DoSetFramesize(const frame_size& fsize){
+void camera_v4l2::DoSetFramesize(const frame_size& fsize){
 
 
 
@@ -928,7 +928,7 @@ bool wait_for_frame(int fd,std::string& error_message){
 
 
 
-void v4l2_camera::DoReturnFrame3(boost::chrono::steady_clock::time_point tp, void* opaque){
+void camera_v4l2::DoReturnFrame3(boost::chrono::steady_clock::time_point tp, void* opaque){
 
 #if defined(LinuxPlatform)
 	boost::unique_lock<boost::recursive_mutex> l1(internal_mutex);
@@ -962,7 +962,7 @@ void v4l2_camera::DoReturnFrame3(boost::chrono::steady_clock::time_point tp, voi
 
 }
 
-capturer::frame_ptr v4l2_camera::DoGetFrame3(boost::chrono::steady_clock::time_point last_frame_tp){
+capturer::frame_ptr camera_v4l2::DoGetFrame3(boost::chrono::steady_clock::time_point last_frame_tp){
 	if (streaming_state != vs_streaming)
 		return capturer::frame_ptr();
 
@@ -991,7 +991,7 @@ capturer::frame_ptr v4l2_camera::DoGetFrame3(boost::chrono::steady_clock::time_p
 	return last_frame;
 }
 
-capturer::frame_ptr v4l2_camera::get_frame3(){
+capturer::frame_ptr camera_v4l2::get_frame3(){
 
 
 	if (streaming_state != vs_streaming)
@@ -1095,7 +1095,7 @@ capturer::frame_ptr v4l2_camera::get_frame3(){
 	return f3ptr;
 }
 
-bool v4l2_camera::wait_all_extracted_buffers(boost::chrono::steady_clock::duration max_duration){
+bool camera_v4l2::wait_all_extracted_buffers(boost::chrono::steady_clock::duration max_duration){
 	//wait all buffers to return
 
 
@@ -1144,7 +1144,7 @@ std::string v4l2_pisxftm_fourcc_to_str2(unsigned int v4l2_pixfmt){
 }
 
 
-void v4l2_camera::DoStopStreaming(){
+void camera_v4l2::DoStopStreaming(){
 
 
 	
@@ -1178,9 +1178,9 @@ void v4l2_camera::DoStopStreaming(){
 
 }
 
-capturer::definition v4l2_camera::DoGetDefinition() const{
+capturer::definition camera_v4l2::DoGetDefinition() const{
 	return v4l2_device_definition;
 }
-capturer::capabilities v4l2_camera::DoGetCapabilities() const{
+capturer::capabilities camera_v4l2::DoGetCapabilities() const{
 	return v4l2_device_capabilities;
 }

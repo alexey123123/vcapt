@@ -104,6 +104,7 @@ public:
 		format();
 		bool defined() const;
 		bool check_framesize(const frame_size& fs) const;
+		std::deque<frame_size> get_possible_framesizes() const;
 	};
 
 	format get_current_format() const

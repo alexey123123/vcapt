@@ -13,7 +13,6 @@ const unsigned short SystemTcpPortNum = 5090;
 
 
 
-
 manager::manager(Utility::Options* options):
 	cdb_manager(options->conf_connection,options->conf_dbname),
 	local_devices_scan_timer(internal_ioservice),
@@ -57,6 +56,10 @@ manager::manager(Utility::Options* options):
 
 }
 manager::~manager(){
+
+
+	internal_ioservice_work_ptr = boost::shared_ptr<boost::asio::io_service::work>();
+
 	boost::system::error_code ec;
 	local_devices_scan_timer.cancel(ec);
 
@@ -66,8 +69,9 @@ manager::~manager(){
 
 	cameras.clear();
 
-	internal_thread.try_join_for(boost::chrono::seconds(5));
+	internal_thread.join();
 }
+
 
 
 void manager::network_camera_doc_changed(const std::string& doc_id, const boost::property_tree::ptree& document_ptree){
@@ -84,16 +88,16 @@ void manager::i_thread_network_camera_doc_changed(std::string doc_id, boost::pro
 	std::cout<<"network_camera_doc_changed ("<<doc_id<<")"<<std::endl;
 	camera_container_ptr cc_ptr;
 	BOOST_FOREACH(cc_ptr,cameras)
-		if (cc_ptr->_camera->get_camera_unique_id()== doc_id)
+		if (cc_ptr->get_camera()->get_camera_unique_id()== doc_id)
 			return ;
 
 
 	//New camera!
-	camera_container_ptr cptr(new camera_container());
+	camera* c1 = new camera_opencv(doc_id,&cdb_manager, boost::bind(&manager::on_camera_finalize,this,_1));
+	c1->start_connection(300);
+	camera_container_ptr cptr(new camera_container(c1));
 	cameras.push_back(cptr);
-	cptr->_camera = new opencv_camera(doc_id,&cdb_manager, boost::bind(&manager::on_camera_finalize,this,_1));
 
-	cptr->_camera->start_connection(100);
 }
 
 
@@ -165,10 +169,11 @@ void manager::check_database_and_start_network_cams(){
 					
 					if (main_doc->have_tag("network_camera")){
 						try{
-							camera_container_ptr cptr(new camera_container());
-							cameras.push_back(cptr);
-							cptr->_camera = new opencv_camera(*doc_id,&cdb_manager, boost::bind(&manager::on_camera_finalize,this,_1),false);
-							cptr->_camera->start_connection(100);
+							//TODO:
+// 							camera_container_ptr cptr(new camera_container());
+// 							cameras.push_back(cptr);
+// 							cptr->_camera = new opencv_camera(*doc_id,&cdb_manager, boost::bind(&manager::on_camera_finalize,this,_1),false);
+// 							cptr->_camera->start_connection(100);
 						}
 						catch(...){
 
@@ -181,26 +186,27 @@ void manager::check_database_and_start_network_cams(){
 }
 
 
-stream_ptr manager::get_stream(camera* cam, client_parameters& e_params, tcp_client_ptr c){
+/*
+codec_container_ptr manager::get_codec_container(camera* cam, client_parameters& e_params, tcp_client_ptr c){
 
-	std::cout<<"manager::get_stream()"<<std::endl;
+	std::cout<<"manager::get_codec_container()"<<std::endl;
 
 	//åñòü òàêîé stream? (cont/codec/bitrate)
 
 
 
-	std::deque<stream_ptr> this_cam_user_streams;
-	std::deque<stream_ptr> this_cam_priority_streams;
+	std::deque<codec_container_ptr> this_cam_user_streams;
+	std::deque<codec_container_ptr> this_cam_priority_streams;
 
 	camera_container_ptr this_cam_container;
 
 	BOOST_FOREACH(camera_container_ptr cptr,cameras){
-		if (cptr->_camera != cam)
+		if (cptr->get_camera() != cam)
 			continue;
 
 		this_cam_container = cptr;
 
-		BOOST_FOREACH(stream_ptr s,cptr->streams){
+		BOOST_FOREACH(codec_container_ptr s,cptr->codec_processors){
 
 			if (s->have_clients()){
 				if (s->have_priority_clients())
@@ -213,14 +219,14 @@ stream_ptr manager::get_stream(camera* cam, client_parameters& e_params, tcp_cli
 				continue ;
 
 			if (e_params.f_size){
-				if (s->get_params().encoder_format.fsize != e_params.f_size)
+				if (s->get_params().codec_format.fsize != e_params.f_size)
 					continue;
 			}
 
 
 
 			if (e_params.bitrate != 0)
-				if (s->get_params().encoder_format.bitrate != e_params.bitrate)
+				if (s->get_params().codec_format.bitrate != e_params.bitrate)
 					continue ;
 
 			return s;
@@ -250,35 +256,35 @@ stream_ptr manager::get_stream(camera* cam, client_parameters& e_params, tcp_cli
 	//check pixel format
 	std::deque<AVPixelFormat> encoder_formats = eptr->get_pixel_formats();
 	capturer::format cam_format = cam->get_current_format();
-	s_params.encoder_format.pixfmt= cam_format.ffmpeg_pixfmt;
-	if (std::find(encoder_formats.begin(),encoder_formats.end(),s_params.encoder_format.pixfmt)==encoder_formats.end()){
+	s_params.codec_format.pixfmt= cam_format.ffmpeg_pixfmt;
+	if (std::find(encoder_formats.begin(),encoder_formats.end(),s_params.codec_format.pixfmt)==encoder_formats.end()){
 		//TODO: if transcoding not enabled ? throw!
 
 		std::cout<<"encoder "<<e_params.codec_name<<" not supported camera pixfmt("<<libav::av_get_pix_fmt_name(cam_format.ffmpeg_pixfmt)<<"). transcoding needed"<<std::endl;
-		s_params.encoder_format.pixfmt = encoder_formats[0];
+		s_params.codec_format.pixfmt = encoder_formats[0];
 	}
 
 	//check bitrate
-	s_params.encoder_format.bitrate = e_params.bitrate;
-	if (s_params.encoder_format.bitrate==0)
-		s_params.encoder_format.bitrate = 500000;
+	s_params.codec_format.bitrate = e_params.bitrate;
+	if (s_params.codec_format.bitrate==0)
+		s_params.codec_format.bitrate = 500000;
 
 
 
 
 	bool need_change_camera_framesize = false;
-	s_params.encoder_format.fsize= e_params.f_size;
+	s_params.codec_format.fsize= e_params.f_size;
 
-	if (s_params.encoder_format.fsize){
+	if (s_params.codec_format.fsize){
 
 		if (have_priority_streams){
 			//we cannot change camera framesize (because have another priority streams)
 			need_change_camera_framesize = false;
 
 			//compare e_params.f_size with current fsize
-			if (s_params.encoder_format.fsize > cam->get_current_framesize()){
+			if (s_params.codec_format.fsize > cam->get_current_framesize()){
 
-				if (c->priority){
+				if (c->internal_client){
 					need_change_camera_framesize = true;
 				} else
 					throw std::runtime_error("requested framesize > framesize of existing prio-stream");
@@ -289,65 +295,68 @@ stream_ptr manager::get_stream(camera* cam, client_parameters& e_params, tcp_cli
 		} else
 			if (have_user_streams){
 
-				if (c->priority){
+				if (c->internal_client){
 					//we are priority stream, change cam->fsize if neñessary
-					need_change_camera_framesize = cam->get_current_framesize() != s_params.encoder_format.fsize;
+					need_change_camera_framesize = cam->get_current_framesize() != s_params.codec_format.fsize;
 				} else{
 					//change cam->fsize only is e_params.f_size > cam->get_framesize()
-					need_change_camera_framesize = s_params.encoder_format.fsize > cam->get_current_framesize();
+					need_change_camera_framesize = s_params.codec_format.fsize > cam->get_current_framesize();
 				}
 			} else{
 				//no have another streams
-				need_change_camera_framesize = cam->get_current_framesize() != s_params.encoder_format.fsize;
+				need_change_camera_framesize = cam->get_current_framesize() != s_params.codec_format.fsize;
 			}
 
 	} else{
 		//framesize not defined. get framesize of cam
 		if (have_priority_streams || have_user_streams){
 			need_change_camera_framesize = false;
-			s_params.encoder_format.fsize = cam->get_current_framesize();
+			s_params.codec_format.fsize = cam->get_current_framesize();
 
 		} else{
-			s_params.encoder_format.fsize = frame_size(640,480);
-			need_change_camera_framesize = s_params.encoder_format.fsize != cam->get_current_framesize();
+			s_params.codec_format.fsize = frame_size(640,480);
+			need_change_camera_framesize = s_params.codec_format.fsize != cam->get_current_framesize();
 		}
 	}
 
 
 	if (need_change_camera_framesize){
-		std::cout<<"need change camera framesize (to "<<s_params.encoder_format.fsize.to_string()<<")"<<std::endl;
+		std::cout<<"need change camera framesize (to "<<s_params.codec_format.fsize.to_string()<<")"<<std::endl;
 		//check e_params.f_size for camera capabilities
-		if (!cam_format.check_framesize(s_params.encoder_format.fsize))
+		if (!cam_format.check_framesize(s_params.codec_format.fsize))
 			throw std::runtime_error("requested framesize not supported by camera");
 
 
 		//try to change camera framesize
-		cam->set_framesize(s_params.encoder_format.fsize);
+		cam->set_framesize(s_params.codec_format.fsize);
 	}
 
 
-	stream_ptr sptr(new stream(this, cam, eptr,s_params));
-	this_cam_container->streams.push_back(sptr);
-	std::cout<<"streams.size()="<<this_cam_container->streams.size()<<std::endl;
+	codec_container_ptr sptr(new stream(this, cam, eptr,s_params));
+	this_cam_container->codec_processors.push_back(sptr);
+	std::cout<<"streams.size()="<<this_cam_container->codec_processors.size()<<std::endl;
 
 
 	return sptr;
 
 
 }
-
+*/
 
 void manager::do_videodev_appearance(const std::string& devname){
 	//std::cout<<"appearance:"<<devname<<std::endl;
 	try{
-		camera_container_ptr cptr(new camera_container());
-		cameras.push_back(cptr);
+
+		camera* c1 = 0;
 #if defined(Win32Platform)
-		cptr->_camera = new opencv_camera(devname,&cdb_manager, boost::bind(&manager::on_camera_finalize,this,_1),true);
+		c1 = new camera_opencv(devname,&cdb_manager, boost::bind(&manager::on_camera_finalize,this,_1),true);
 #elif defined(LinuxPlatform)
-		cptr->_camera = new v4l2_camera(devname,&cdb_manager, boost::bind(&manager::on_camera_finalize,this,_1));
+		c1 = new camera_v4l2(devname,&cdb_manager, boost::bind(&manager::on_camera_finalize,this,_1));
 #endif
-		cptr->_camera->start_connection(100);
+
+		camera_container_ptr cptr(new camera_container(c1));
+		cameras.push_back(cptr);
+		c1->start_connection(100);
 	}
 	catch(...){
 
@@ -373,28 +382,18 @@ void manager::dispatch_new_client(tcp_client_ptr client){
 			throw std::runtime_error("HTTP/1.0 400 bad request:camera id not defined");
 		std::string camera_id = client->url_keypairs["id"];
 		//check camera id
-		camera_container_ptr camera_cptr;
+		camera_container_ptr cptr;
 		BOOST_FOREACH(camera_container_ptr c,cameras)
-			if (c->_camera->get_camera_unique_id() == camera_id){
-				camera_cptr = c;
+			if (c->get_camera()->get_camera_unique_id() == camera_id){
+				cptr = c;
 				break;
 			}
-		if (!camera_cptr)
+		if (!cptr)
 			throw std::runtime_error("HTTP/1.0 400 bad request:camera not found");
 
 
+		cptr->add_network_client(client);
 
-
-		client_parameters e_params;
-		std::string error_message;
-		if (!e_params.construct(client,error_message))
-			throw std::runtime_error("HTTP/1.0 400 bad request:"+error_message);
-
-		//have similar stream ?
-		stream_ptr e_stream = get_stream(camera_cptr->_camera, e_params, client);
-		if (!e_stream)
-			throw std::runtime_error("HTTP/1.0 400 cannot create stream");
-		e_stream->add_new_tcp_client(client);
 	}
 	catch(std::runtime_error& ex){
 		using namespace Utility;
@@ -446,7 +445,7 @@ void manager::handle_tcp_accept(unsigned short port, tcp_client_ptr cptr,boost::
 		return ;
 	std::cout<<"port("<<int(port)<<"): connection accepted"<<std::endl;
 
-	cptr->priority = port == SystemTcpPortNum ? true : false;
+	cptr->internal_client = port == SystemTcpPortNum ? true : false;
 
 	//async receive http-request
 	memset(cptr->recv_buffer,0,CLIENT_BUF_SIZE);
@@ -610,53 +609,22 @@ void manager::do_local_devices_scan(boost::system::error_code ec){
 // manager::camera_container::camera_container():_opencv_camera(0),_v4l2_camera(0){
 // 
 // }
-manager::camera_container::camera_container():_camera(0){
 
-}
-manager::camera_container::~camera_container(){
 
-	streams.clear();
 
-	if (_camera)
-		delete _camera;
+void manager::finalize_codec_processor(camera_container* _container, codec_processor* _processor){
+	internal_ioservice.post(boost::bind(&manager::i_thread_finalize_codec_processor,this,_container,_processor));
 }
 
-
-void manager::finalize_stream(stream* s){
-	internal_ioservice.post(boost::bind(&manager::i_thread_finalize_stream,this,s));
+void manager::i_thread_finalize_codec_processor(camera_container* _container, codec_processor* _processor){
+	BOOST_FOREACH(camera_container_ptr cptr,cameras)
+		if (cptr.get()==_container){
+			cptr->delete_codec_processor(_processor);
+			return ;
+		}
 }
 
-void manager::i_thread_finalize_stream(stream* s){
-	//TODO: finalize stream
 
-	BOOST_FOREACH(camera_container_ptr cptr,cameras){
-		if (cptr->_camera != s->get_camera())
-			continue;
-
-		stream_ptr sptr;
-		std::deque<stream_ptr> remained_streams;
-		std::deque<stream_ptr>::size_type s1 = cptr->streams.size();
-		BOOST_FOREACH(sptr,cptr->streams)
-			if (sptr.get()!=s)
-				remained_streams.push_back(sptr);
-
-		sptr = stream_ptr();
-		cptr->streams.clear();
-
-		cptr->streams = remained_streams;
-
-		std::cout<<"streams.size()="<<cptr->streams.size()<<std::endl;
-
-		if ((cptr->streams.size()==0)&&(s1>0))
-			cptr->_camera->stop_streaming();
-
-		break;
-	}
-
-
-
-
-}
 
 void manager::internal_thread_proc(){
 
@@ -671,3 +639,6 @@ void manager::internal_thread_proc(){
 
 
 }
+
+
+

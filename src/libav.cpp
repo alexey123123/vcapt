@@ -74,7 +74,9 @@ typedef AVIOContext *(*f_avio_alloc_context)(
 	int64_t (*seek)(void *opaque, int64_t offset, int whence));
 typedef int (*f_avio_open)(AVIOContext **s, const char *url, int flags);
 typedef int (*f_av_write_frame)(AVFormatContext *s, AVPacket *pkt);
+typedef int (*f_av_interleaved_write_frame)(AVFormatContext *s, AVPacket *pkt);
 typedef int (*f_avformat_write_header)(AVFormatContext *s, AVDictionary **options);
+typedef int (*f_av_write_trailer)(AVFormatContext *s);
 
 
 typedef void (*f_avfilter_register_all)(void);
@@ -147,7 +149,9 @@ static f_avformat_free_context _avformat_free_context = 0;
 static f_avio_alloc_context _avio_alloc_context = 0;
 static f_avio_open _avio_open = 0;
 static f_av_write_frame _av_write_frame = 0;
+static f_av_interleaved_write_frame _av_interleaved_write_frame = 0;
 static f_avformat_write_header _avformat_write_header = 0;
+static f_av_write_trailer _av_write_trailer = 0;
 
 static f_avfilter_register_all _avfilter_register_all = 0;
 static f_avfilter_get_by_name _avfilter_get_by_name = 0; 
@@ -373,10 +377,17 @@ bool libav::initialize(std::string& error_message){
 		if (!_av_write_frame)
 			throw std::runtime_error("av_write_frame not found");
 
+		_av_interleaved_write_frame = (f_av_interleaved_write_frame)avformat_lib_ptr->GetSym("av_interleaved_write_frame");
+		if (!_av_interleaved_write_frame)
+			throw std::runtime_error("av_interleaved_write_frame not found");
+
 		_avformat_write_header = (f_avformat_write_header)avformat_lib_ptr->GetSym("avformat_write_header");
 		if (!_avformat_write_header)
 			throw std::runtime_error("avformat_write_header not found");
 
+		_av_write_trailer = (f_av_write_trailer)avformat_lib_ptr->GetSym("av_write_trailer");
+		if (!_av_write_trailer)
+			throw std::runtime_error("av_write_trailer not found");
 
 		_avfilter_register_all = (f_avfilter_register_all)avfilter_lib_ptr->GetSym("avfilter_register_all");
 		if (!_avfilter_register_all)
@@ -740,12 +751,23 @@ int libav::av_write_frame(AVFormatContext *s, AVPacket *pkt){
 
 }
 
+int libav::av_interleaved_write_frame(AVFormatContext *s, AVPacket *pkt){
+	if (!_av_interleaved_write_frame)
+		throw std::runtime_error("av_interleaved_write_frame not found");
+	return _av_interleaved_write_frame(s,pkt);
+}
+
 int libav::avformat_write_header(AVFormatContext *s, AVDictionary **options){
 	if (!_avformat_write_header)
 		throw std::runtime_error("avformat_write_header not found");
 	return _avformat_write_header(s,options);
 }
 
+int libav::av_write_trailer(AVFormatContext *s){
+	if (!_av_write_trailer)
+		throw std::runtime_error("av_write_trailer not found");
+	return _av_write_trailer(s);
+}
 
 
 void libav::avfilter_register_all(void){

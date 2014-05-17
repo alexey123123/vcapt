@@ -1,278 +1,186 @@
-#include <boost/foreach.hpp>
-#include <boost/asio.hpp>
+#include <boost/asio/write.hpp>
 #include <boost/bind.hpp>
-
-#include <opencv2/opencv.hpp>
+#include <boost/asio/placeholders.hpp>
 
 #include "stream.h"
-#include "manager.h"
 
-#define FPS_INTEGRATION_MS 3000
-
-capturer::frame_ptr generate_blank_frame2(int width,int height);
-
-
-stream::stream(manager* _m, camera* _c,boost::shared_ptr<ffmpeg_encoder> e_ptr, const parameters& p):
-	_manager(_m),
-	_camera(_c),
-	_encoder_ptr(e_ptr),
-	_parameters(p),
-	work_timer(internal_ioservice),
-	check_clients_timer(internal_ioservice),
-	fps_meter_timer(internal_ioservice),
-	encoded_frame_counter(0),
-
-
-	//statistics
-	encoder_fps(0),
-	minimum_encode_time_ms(0xFFFFFFFF),
-	maximum_encode_time_ms(0),
-	summary_encode_time_ms(0)
-	{
-		std::cout<<"------stream constructor"<<std::endl;
-
-	_encoder_ptr->initialize(_parameters.encoder_format,
-		boost::bind(&stream::encoder_data_handler,this,_1));
-
-
-
-	work_timer.expires_from_now(boost::chrono::milliseconds(50));
-	work_timer.async_wait(boost::bind(&stream::do_stream_work,this,boost::asio::placeholders::error));
-
-	fps_meter_timer.expires_from_now(boost::chrono::milliseconds(FPS_INTEGRATION_MS));
-	fps_meter_timer.async_wait(boost::bind(&stream::do_fps_meter,this,boost::asio::placeholders::error));
-
-	last_frame_tp = boost::chrono::steady_clock::now();
-
-
-	//starting thread
-	boost::system::error_code ec;
-	internal_thread = boost::thread(boost::bind(&stream::internal_thread_proc,this));
-}
+stream::stream(priority p, stop_handler sh):_priority(p), _stop_handler(sh){
+	
+};
 
 stream::~stream(){
-	
+}
 
-
-	try{
-
-		boost::system::error_code ec;
-		work_timer.cancel(ec);
-		check_clients_timer.cancel(ec);
-		fps_meter_timer.cancel(ec);
-
-
-		internal_ioservice_work_ptr = boost::shared_ptr<boost::asio::io_service::work>();
-
-		std::cout<<"joining stream thread ("<<_parameters.encoder_format.fsize.to_string()<<")..."<<std::endl;
-		internal_thread.join();
-		std::cout<<"ok"<<std::endl;
-
-	}
-	catch(...){
-		Utility::Journal::Instance()->Write(Utility::ALERT,Utility::DST_SYSLOG|Utility::DST_STDERR,"stream thread stop error");
-	}
-
-	std::cout<<"deleting encoder..."<<std::endl;
-	_encoder_ptr = boost::shared_ptr<ffmpeg_encoder>();
-
-	boost::unique_lock<boost::mutex> l1(clients_mutex);
-	clients.clear();
-	l1.unlock();
-
-	std::cout<<"stream finished"<<std::endl;
-
-
+void stream::call_stop_handler(){
+	_stop_handler(this);
 }
 
 
-void stream::internal_thread_proc(){
 
-	try{
-		internal_ioservice_work_ptr = boost::shared_ptr<boost::asio::io_service::work>(
-			new boost::asio::io_service::work(internal_ioservice));
-		internal_ioservice.run();
-	}
-	catch(...){
-
-	}
+av_container_stream::av_container_stream(priority p, stop_handler sh,tcp_client_ptr c):stream(p,sh),
+	fake_context(0),format_context(0),video_stream(0),
+	nsb(c,boost::bind(&av_container_stream::nsb_finalize,this,_1,_2), 10000000),
+	kf_found(false)
+{
+	stream_start_tp = boost::chrono::steady_clock::now();
 }
 
-#define MAX_STREAM_EXCEPTIONS_COUNT 10
+av_container_stream::~av_container_stream(){
+	std::cout<<"~av_container_stream()"<<std::endl;
 
-void stream::do_stream_work(boost::system::error_code ec){
-	if (ec)
-		return ;
+	nsb.close();
 
-	if (!internal_ioservice_work_ptr)
-		return ;
+	if (format_context){
 
+		//TODO: write_trailer
 
-	int work_interval_ms = 30;
-	int exceptions_count = 0;
-	try{
-		using namespace boost::chrono;
-		high_resolution_clock::time_point start = high_resolution_clock::now();
-
-		//capture frame
-		capturer::frame_ptr fptr = _camera->get_frame(last_frame_tp);
-		capturer::state st = fptr->capturer_state;
-		
-		switch(st){
-			case capturer::st_Ready:{
-				break;
-			}
-			default:{
-				//need generate state-picture
-				if (!blank_frame){
-					blank_frame = generate_blank_frame2(_camera->get_current_framesize().width,_camera->get_current_framesize().height);
-					if (!blank_frame)
-						throw std::runtime_error("cannot generate blank frame");
-				}
-				fptr = blank_frame;
-				fptr->tp = boost::chrono::steady_clock::now();
-				fptr->capturer_state = st;
-
-				work_interval_ms = 300;
-				break;
-
-			}
+		if (format_context->pb != 0){
+			libav::av_free(format_context->pb);
+			format_context->pb = 0;
 		}
 		
-		_encoder_ptr->process_frame(fptr);
-		last_frame_tp = fptr->tp;				
 
-		//some statistics
-		high_resolution_clock::time_point stop = high_resolution_clock::now();  
-		encoded_frame_counter++;
-
-
-		uint64_t enc_duration = duration_cast<milliseconds> (stop - start).count();
-
-		summary_encode_time_ms += enc_duration;
-		if (enc_duration > maximum_encode_time_ms)
-			maximum_encode_time_ms += enc_duration;
-		if (enc_duration < minimum_encode_time_ms)
-			minimum_encode_time_ms = enc_duration;
-
-		exceptions_count = 0;
-	}
-	catch(std::runtime_error& ex){
-		exceptions_count++;
-
-		if (exceptions_count > MAX_STREAM_EXCEPTIONS_COUNT){
-			using namespace Utility;
-			Journal::Instance()->Write(ALERT,DST_SYSLOG|DST_STDERR,"stream thread exceeded exception limit");
-			//finalize stream
-			_manager->finalize_stream(this);
-
-			return ;
+		if (video_stream!= 0){
+			video_stream->codec = fake_context;
+			if (video_stream->codec != 0)
+				libav::avcodec_close(video_stream->codec);
 		}
-	}
-	catch(...){
-		//fatal exception
-		using namespace Utility;
-		Journal::Instance()->Write(ALERT,DST_SYSLOG|DST_STDERR,"stream thread stopped by unknown exception");
 
-		//finalize stream
-		_manager->finalize_stream(this);
 
-		return ;
+// 		if (video_stream)
+// 			video_stream->codec = 0;
+
+		libav::avformat_free_context(format_context);
+
 	}
 
-	work_timer.expires_from_now(boost::chrono::milliseconds(work_interval_ms));
-	work_timer.async_wait(boost::bind(&stream::do_stream_work,this,boost::asio::placeholders::error));
+
+}
+
+void av_container_stream::nsb_finalize(network_stream_buffer* _nsb, boost::system::error_code ec){
+	call_stop_handler();
 }
 
 
-void stream::add_new_tcp_client(tcp_client_ptr c){
-	internal_ioservice.post(boost::bind(&stream::i_thread_add_new_tcp_client,this,c));
-}
 
-void stream::remove_tcp_client(tcp_client_ptr c){
-	internal_ioservice.post(boost::bind(&stream::i_thread_remove_tcp_client,this,c));
-}
+int __write_packet__2(void *opaque, uint8_t *buf, int buf_size);
 
-void stream::encoder_data_handler(buffer_ptr b){
-	boost::unique_lock<boost::mutex> l1(clients_mutex);
-	client_ptr ncptr;
-	BOOST_FOREACH(ncptr,clients){
-		if (!ncptr->header_sended){
-			 	//header buffer
-			 	buffer_ptr hb = _encoder_ptr->get_header();
-				if (hb){
-					ncptr->add_buffer(hb);
-			 	}
-				ncptr->header_sended = true;
+
+
+stream_ptr av_container_stream::create_network_stream(const std::string& container_name, 
+														AVCodecContext* av_codec_context, 
+														stream::stop_handler sh,
+														tcp_client_ptr c){
+
+	if (container_name=="mjpeg"){
+		return boost::shared_ptr<mjpeg_stream>(new mjpeg_stream(sh,c));
+	}
+
+	av_container_stream* avs(new av_container_stream(
+									c->internal_client ? stream::p_system_service : stream::p_user,
+									sh,c)); 
+
+
+		try{
+			avs->alloc_stream(container_name,av_codec_context);
+
+
+			//network stream stuff
+			avs->format_context->pb = libav::avio_alloc_context(avs->out_stream_buffer,STREAM_BUFFER_SIZE,1,0,0,__write_packet__2,0);
+			if (!avs->format_context->pb)
+				throw std::runtime_error("avio_alloc_context error");
+			avs->format_context->pb->opaque = (void*)avs;
+
+			//generate http-answer
+			std::string http_ok_answer = avs->get_http_ok_answer(container_name);
+			c->get_socket().send(boost::asio::buffer(http_ok_answer));
+
+			libav::avformat_write_header(avs->format_context,0);
+		}
+		catch(std::runtime_error& ex){			
+			delete avs;
+			avs = 0;
+
+			throw std::runtime_error(ex.what());
 
 		}
-		ncptr->add_buffer(b);
-		ncptr->send_first_buffer();
-	}
+		
+		return stream_ptr(avs);
 }
 
-void stream::i_thread_add_new_tcp_client(tcp_client_ptr c){
-
-	boost::unique_lock<boost::mutex> l1(clients_mutex);
-
-	client_ptr cptr(new client(this,c));
-	clients.push_back(cptr);
-
-
-	//HTTP answer
-	buffer_ptr http_b = _encoder_ptr->get_http_ok_answer();
-	if (http_b)
-		cptr->add_buffer(http_b);
-
-// 	//header buffer
-// 	buffer_ptr hb = _encoder_ptr->get_header();
-// 	if (hb){
-// 		std::cout<<"header sended"<<std::endl;
-// 		cptr->add_buffer(hb);
-// 	}
-	cptr->send_first_buffer();
-
-
-	std::cout<< "i_thread_add_new_tcp_client ok" <<std::endl;
-}
-
-void stream::i_thread_remove_tcp_client(tcp_client_ptr c){
-	boost::unique_lock<boost::mutex> l1(clients_mutex);
+void av_container_stream::alloc_stream(const std::string& container_name, AVCodecContext* av_codec_context){
+	libav::avformat_alloc_output_context2(&format_context, NULL, container_name.c_str(), NULL);
+	if (!format_context)
+		throw std::runtime_error("cannot initialize container ("+container_name+")");
 	
-	client_ptr ncptr;
-	std::deque<client_ptr> new_network_clients;
+	video_stream = libav::avformat_new_stream(format_context, av_codec_context->codec);
+	if (!video_stream)
+		throw std::runtime_error("cannot create stream (codec incompatible with container?)");
 
-	BOOST_FOREACH(ncptr,clients)
-		if (ncptr->_tcp_client_ptr.get() != c.get())
-			new_network_clients.push_back(ncptr);
-	clients = new_network_clients;
+	//save dumy codec context;
+	fake_context = video_stream->codec;
+	
+	video_stream->codec = av_codec_context;
 
-	check_clients_timer.expires_from_now(boost::chrono::seconds(2));
-	check_clients_timer.async_wait(boost::bind(&stream::check_clients_and_finalize_stream,this,boost::asio::placeholders::error));
+	video_stream->id = format_context->nb_streams-1;
+	video_stream->index = format_context->nb_streams-1;
+}
 
-	std::cout<< "i_thread_remove_tcp_client ok" <<std::endl;
+
+
+void av_container_stream::do_process_packet(packet_ptr p){
+	//write packet to container
+
+	AVPacket* avpacket = &(p->p);
+	avpacket->stream_index = video_stream->id;
+
+
+	avpacket->pts = boost::chrono::duration_cast<boost::chrono::milliseconds>(p->frame_tp - stream_start_tp).count();
+
+	AVRational r1;
+	r1.num = 1;
+	r1.den = 1000;
+	avpacket->pts = libav::av_rescale_q_rnd(avpacket->pts, r1, video_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
+	avpacket->dts = avpacket->pts;
+	//avpacket->duration = libav::av_rescale_q(avpacket->duration, r1, video_stream->time_base);
+	avpacket->duration = 30;
+
+	
+
+	//kf_found =  ? true
+
+	if (!kf_found)
+		if (avpacket->flags & AV_PKT_FLAG_KEY)
+			kf_found = true;
+
+	if (kf_found){
+		//transfer packet to stream
+		libav::av_write_frame(format_context,avpacket);
+	}
+
 
 }
 
 
-stream::client::~client(){
 
-	buffers_mutex.lock();
-	while(buffers.size()>0)
-		buffers.pop();
-	buffers_mutex.unlock();
-	while (sent_packets_count>0)
-		boost::this_thread::sleep(boost::posix_time::milliseconds(10));
+
+network_stream_buffer::network_stream_buffer(tcp_client_ptr _tcptr,stop_handler _h, unsigned int max_buffer_size):
+tcptr(_tcptr),_stop_handler(_h),_max_buffer_size(max_buffer_size),
+total_size(0),sent_packets_count(0){
+
+}
+network_stream_buffer::~network_stream_buffer(){
+	close();
+}
+void network_stream_buffer::close(){
+	tcptr = tcp_client_ptr();
 }
 
-#define MAX_CLIENT_BUFFER_SIZE 1000000
-
-
-void stream::client::add_buffer(buffer_ptr b){
-	boost::unique_lock<boost::mutex> l1(buffers_mutex);
+void network_stream_buffer::add_buffer(buffer_ptr b){
+	boost::unique_lock<boost::recursive_mutex> l1(buffers_mutex);
 	if (client_error_code)
 		return ;
-	while (total_size + b->size() >= MAX_CLIENT_BUFFER_SIZE){
+	while (total_size + b->size() >= _max_buffer_size){
 		std::cout<<"add_buffer: need cleanup"<<std::endl;
 		buffer_ptr b1 = buffers.front();
 		if (b1){
@@ -282,15 +190,16 @@ void stream::client::add_buffer(buffer_ptr b){
 			break;
 	}
 
-	if (total_size + b->size() >= MAX_CLIENT_BUFFER_SIZE)
+	if (total_size + b->size() >= _max_buffer_size)
 		throw std::runtime_error("NetworkStreamer: buffer overflow");
 
 	buffers.push(b);
 	total_size += b->size();
 	// std::cout<<"B: total_size="<<total_size<<",count="<<buffers.size()<<std::endl;
+	send_first_buffer();
 }
-void stream::client::send_first_buffer(){
-	boost::unique_lock<boost::mutex> l1(buffers_mutex);
+void network_stream_buffer::send_first_buffer(){
+	boost::unique_lock<boost::recursive_mutex> l1(buffers_mutex);
 	if (!current_buffer){
 
 		if (buffers.size()>0){
@@ -299,9 +208,9 @@ void stream::client::send_first_buffer(){
 		}
 
 		if (current_buffer){
-			boost::asio::async_write(_tcp_client_ptr->get_socket(),
+			boost::asio::async_write(tcptr->get_socket(),
 				boost::asio::buffer(current_buffer->data(),current_buffer->size()),
-				boost::bind(&stream::client::write_data_handler, 
+				boost::bind(&network_stream_buffer::write_data_handler, 
 				this,
 				current_buffer,
 				boost::asio::placeholders::error,
@@ -312,11 +221,11 @@ void stream::client::send_first_buffer(){
 	}
 
 }
-void stream::client::write_data_handler(buffer_ptr bptr, boost::system::error_code ec,unsigned int bytes_transferred){
-	boost::unique_lock<boost::mutex> l1(buffers_mutex);
+void network_stream_buffer::write_data_handler(buffer_ptr bptr, boost::system::error_code ec,unsigned int bytes_transferred){
+	boost::unique_lock<boost::recursive_mutex> l1(buffers_mutex);
 	sent_packets_count--;
 	if (!ec){
-
+		std::cout<<"bytes_transferred:"<<bytes_transferred<<std::endl;
 		if (bptr->size() != bytes_transferred)
 			std::cout<<"------------TRANSFERED only "<<bytes_transferred<<" bytes from "<<bptr->size()<<std::endl;
 
@@ -326,7 +235,7 @@ void stream::client::write_data_handler(buffer_ptr bptr, boost::system::error_co
 			total_size -= current_buffer->size();
 			current_buffer = buffer_ptr();
 		}
-		l1.unlock();
+
 		send_first_buffer();
 
 	} else{
@@ -334,152 +243,125 @@ void stream::client::write_data_handler(buffer_ptr bptr, boost::system::error_co
 		std::string e_mess = ec.message();
 		std::cout<<"delivery error (bt:"<<bytes_transferred<<")("<<e_mess<<")"<<std::endl;
 		client_error_code = ec;
-		_stream->remove_tcp_client(_tcp_client_ptr);
+
+
+		//client disconnected
+		_stop_handler(this,client_error_code);
 	}
 
 }
 
-bool stream::have_priority_clients(){
-	boost::unique_lock<boost::mutex> l1(clients_mutex);
-	BOOST_FOREACH(client_ptr c,clients){
-		if (c->_tcp_client_ptr->priority)
-			return true;
-	}
-	return false;
-}
+int av_container_stream::do_delivery_encoded_data(uint8_t *buf, int buf_size){
+		//std::cout<<"Encoder::webm_write_packet("<<buf_size<<" bytes)"<<std::endl;
+	if (buf_size==0)
+		return 0;
 
-bool stream::have_clients(){
-	boost::unique_lock<boost::mutex> l1(clients_mutex);
-	return clients.size() > 0;
-}
 
-void stream::check_clients_and_finalize_stream(boost::system::error_code ec){
-	boost::unique_lock<boost::mutex> l1(clients_mutex);
-	if (clients.size()==0){
-		l1.unlock();
-		_manager->finalize_stream(this);
+	/*
+	if (!test_fstream){
+		std::string filename = "vcapt."+container_name;
+		test_fstream.open(filename.c_str(),std::ios::out|std::ios::trunc|std::ios::binary);
 	}
 		
-}
-
-void stream::do_fps_meter(boost::system::error_code ec){
-	if (ec)
-		return ;
-
-	if (!internal_ioservice_work_ptr)
-		return ;
-
-	uint64_t avg_time = -1;
-	if (encoded_frame_counter > 0)
-		avg_time = summary_encode_time_ms / encoded_frame_counter;
-	summary_encode_time_ms = 0;
-
-	int new_fps = encoded_frame_counter / (FPS_INTEGRATION_MS / 1000);
-	if (encoder_fps != new_fps){
-		encoder_fps = new_fps;
-		std::cout<<"Encoder: encode fps changed: "<<encoder_fps<<"(avg time:"<<avg_time<<" ms,min:"<<minimum_encode_time_ms<<",max:"<<maximum_encode_time_ms<<")"<<std::endl;
-
-
-		//TODO: filter rebuild (if need display fps)
-
-	}	
-	encoded_frame_counter = 0;
-
-	fps_meter_timer.expires_from_now(boost::chrono::milliseconds(FPS_INTEGRATION_MS));
-	fps_meter_timer.async_wait(boost::bind(&stream::do_fps_meter,this,boost::asio::placeholders::error));
-
-}
-
-
-AVFrame* convert_cv_Mat_to_avframe_yuv420p(cv::Mat* cv_mat,int dst_width,int dst_height,std::string& error_message){
-	SwsContext* c = 0;
-	bool ret = true;
-	AVFrame* ret_frame = 0;
-
-	AVPicture pic_bgr24;
-	try{
-		//1. Convert cv::Mat to AVPicture
-		std::vector<uint8_t> buf;
-		buf.resize(cv_mat->cols * cv_mat->rows * 3); // 3 bytes per pixel
-		for (int i = 0; i < cv_mat->rows; i++)
-		{
-			memcpy( &( buf[ i*cv_mat->cols*3 ] ), &( cv_mat->data[ i*cv_mat->step ] ), cv_mat->cols*3 );
-		}
-
-		libav::avpicture_fill(&pic_bgr24, &buf[0], AV_PIX_FMT_BGR24, cv_mat->cols,cv_mat->rows);
-		//buf.clear();
-
-		//2. BGR24 -> YUV420P
-
-
-		c =  libav::sws_getContext( cv_mat->cols,cv_mat->rows, 
-			AV_PIX_FMT_BGR24,
-			dst_width, dst_height,AV_PIX_FMT_YUV420P, SWS_BICUBIC, NULL, NULL, NULL );
-		if (!c)
-			throw std::runtime_error("cannot allocate SwsContext");
-
-		int res=-55;
-
-
-		//ret_value = Frame::construct_and_alloc(dst_pixel_format,src->avframe()->width, src->avframe()->height,1);
-
-
-		ret_frame = libav::av_frame_alloc();
-		ret_frame->width = dst_width;
-		ret_frame->height = dst_height;
-		ret_frame->format = AV_PIX_FMT_YUV420P;
-		libav::av_frame_get_buffer(ret_frame,1);
-
-		res = libav::sws_scale( c ,
-			pic_bgr24.data, pic_bgr24.linesize, 
-			0, 
-			cv_mat->rows,
-			ret_frame->data, ret_frame->linesize ); 
-
-		ret_frame->format = AV_PIX_FMT_YUV420P;
-
+	if (test_fstream){
+		test_fstream.write((const char*)buf,buf_size);
+		std::cout<<"written "<<buf_size<<", tellp:"<<test_fstream.tellp()<<std::endl;
 	}
-	catch(std::runtime_error& ex){
-		error_message = std::string(ex.what());
-		if (ret_frame != 0){
-			libav::av_frame_free(&ret_frame);
+	*/
+		
+
+
+
+	buffer_ptr b(new buffer());
+	b->_data.reserve(buf_size);
+	std::copy(buf,buf+buf_size,std::back_inserter(b->_data));
+	nsb.add_buffer(b);
+
+	return buf_size;
+}
+int64_t av_container_stream::do_seek(int64_t offset, int whence){
+	return offset;
+}
+
+
+
+int __write_packet__2(void *opaque, uint8_t *buf, int buf_size){
+	av_container_stream* s = (av_container_stream*)opaque;
+	return s->do_delivery_encoded_data(buf,buf_size);
+}
+
+std::string av_container_stream::get_http_ok_answer(const std::string& container_name){
+	std::ostringstream oss;
+	oss <<"HTTP/1.0 200 OK"<<std::endl;
+	oss <<"Pragma: no-cache"<<std::endl;
+	if (container_name=="mjpeg"){
+		oss << "Server: some device"<<std::endl;
+		oss << "Accept-Ranges: bytes"<<std::endl;
+		oss << "Connection: close"<<std::endl;
+		oss << "Content-Type: multipart/x-mixed-replace; boundary=--ipcamera"<<std::endl;
+
+	} else
+		//oss <<"Content-Type: video/"<<container_name<<std::endl;
+		oss <<"Content-Type: "<<format_context->oformat->mime_type<<std::endl;
+
+
+	
+
+	oss << std::endl;
+
+	return oss.str();
+}
+
+mjpeg_stream::mjpeg_stream(stop_handler sh,tcp_client_ptr c):
+	stream(p_user,sh),
+	nsb(c,boost::bind(&mjpeg_stream::nsb_finalize,this,_1,_2),1000000),
+	boundary_value("--ipcamera"){
+
+		//delivery http-answer
+		std::ostringstream oss;
+		oss <<"HTTP/1.0 200 OK"<<std::endl;
+		oss <<"Pragma: no-cache"<<std::endl;
+		oss << "Server: some device"<<std::endl;
+		oss << "Accept-Ranges: bytes"<<std::endl;
+		oss << "Connection: close"<<std::endl;
+		oss << "Content-Type: multipart/x-mixed-replace; boundary="<<boundary_value<<std::endl;
+		oss << std::endl;
+
+		try{
+			c->get_socket().send(boost::asio::buffer(oss.str()));
 		}
-		ret_frame = 0;
-	}
+		catch(...){
 
-
-	if (c)
-		libav::sws_freeContext(c);
-
-	return ret_frame;
-}
-
-
-capturer::frame_ptr generate_blank_frame2(int width,int height){
-	using namespace cv;
-
-	int w = width;
-	if (w==-1)
-		w = 640;
-
-	int h = height;
-	if (h==-1)
-		h = 480;
-
-	cv::Mat m1(h, w, CV_8UC3, Scalar(0,0,0));
-
-	capturer::frame_ptr fptr;
-
-	std::string error_message;
-	AVFrame* av_f1 = convert_cv_Mat_to_avframe_yuv420p(&m1,w,h,error_message);
-	if (!av_f1)
-		return fptr;
-
-	fptr = capturer::frame_ptr(new capturer::frame());
-	fptr->avframe = av_f1;
-
-
-	return fptr;
+		}
+		
 
 }
+
+void mjpeg_stream::do_process_packet(packet_ptr p){
+	//generate header
+	std::ostringstream oss;
+	oss << boundary_value;
+	//std::string dt_str = boost::posix_time::to_simple_string(ts);
+	//oss << "Date: "<<dt_str<<std::endl;
+	//std::cout<<"frame formirated: "<<dt_str<<std::endl;
+	oss << "Content-Length: "<<p->p.size<<std::endl;
+	oss << std::endl;
+	std::string header = oss.str();
+	
+	buffer_ptr bptr(new buffer());
+	bptr->_data.reserve(header.size() + p->p.size);
+	std::copy(header.begin(),header.end(),std::back_inserter(bptr->_data));				
+
+
+	//send header
+	//send jpeg
+	nsb.add_buffer(bptr);
+	nsb.add_buffer(buffer_ptr(new buffer(p)));
+
+}
+
+void mjpeg_stream::nsb_finalize(network_stream_buffer* _nsb, boost::system::error_code ec){
+	call_stop_handler();
+}
+
 

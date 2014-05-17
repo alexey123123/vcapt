@@ -1,6 +1,6 @@
-#include "opencv_camera.h"
+#include "camera_opencv.h"
 
-opencv_camera::opencv_camera(const std::string& _dev_name_or_doc_id, couchdb::manager* _cdb_manager,stop_handler _h,
+camera_opencv::camera_opencv(const std::string& _dev_name_or_doc_id, couchdb::manager* _cdb_manager,stop_handler _h,
 	bool _windows_internal_cam):
 		camera(
 			_windows_internal_cam? camera::c_local : camera::c_network,
@@ -19,11 +19,11 @@ opencv_camera::opencv_camera(const std::string& _dev_name_or_doc_id, couchdb::ma
 
 }
 
-opencv_camera::~opencv_camera(){
+camera_opencv::~camera_opencv(){
 	cap = cv::VideoCapture();
 }
 
-capturer::definition opencv_camera::DoGetDefinition() const{
+capturer::definition camera_opencv::DoGetDefinition() const{
 	capturer::definition _definition;
 	if (windows_internal_cam){
 		_definition.bus_info = "windows";
@@ -37,7 +37,7 @@ capturer::definition opencv_camera::DoGetDefinition() const{
 	_definition.unique_string = _definition.manufacturer_name+"_"+_definition.device_name+"_"+_definition.bus_info;
 	return _definition;
 }
-capturer::capabilities opencv_camera::DoGetCapabilities() const{
+capturer::capabilities camera_opencv::DoGetCapabilities() const{
 	capabilities caps;
 	caps.flags = 0;
 
@@ -45,7 +45,7 @@ capturer::capabilities opencv_camera::DoGetCapabilities() const{
 }
 
 
-void opencv_camera::DoConnect3(const capturer::connect_parameters& params){
+void camera_opencv::DoConnect3(const capturer::connect_parameters& params){
 	boost::unique_lock<boost::mutex> l1(internal_mutex);
 
 	try{
@@ -70,8 +70,12 @@ void opencv_camera::DoConnect3(const capturer::connect_parameters& params){
 		cv::Mat m1;
 		cap >> m1;
 
+
 		current_framesize = frame_size(m1.cols,m1.rows);
-		current_format.framesizes.push_back(current_framesize);
+
+		current_format.framesizes.clear();
+		current_format.framesizes.push_back(frame_size(320,240));
+		current_format.framesizes.push_back(frame_size(640,480));
 
 
 	}
@@ -81,7 +85,7 @@ void opencv_camera::DoConnect3(const capturer::connect_parameters& params){
 
 }
 
-void opencv_camera::DoDisconnect(){
+void camera_opencv::DoDisconnect(){
 	boost::unique_lock<boost::mutex> l1(internal_mutex);
 
 	cap = cv::VideoCapture();
@@ -90,7 +94,7 @@ void opencv_camera::DoDisconnect(){
 
 
 
-capturer::frame_ptr opencv_camera::DoGetFrame3(boost::chrono::steady_clock::time_point last_frame_tp){
+capturer::frame_ptr camera_opencv::DoGetFrame3(boost::chrono::steady_clock::time_point last_frame_tp){
 
 	if (!cap.isOpened())
 		return capturer::frame_ptr();
@@ -137,15 +141,18 @@ capturer::frame_ptr opencv_camera::DoGetFrame3(boost::chrono::steady_clock::time
 
 }
 
-capturer::format opencv_camera::DoGetCurrentFormat() const {
+capturer::format camera_opencv::DoGetCurrentFormat() const {
 	return current_format;
 }
 
-void opencv_camera::DoSetFramesize(const frame_size& fsize){
-
+void camera_opencv::DoSetFramesize(const frame_size& fsize){
+	boost::unique_lock<boost::mutex> l1(internal_mutex);
+	cap.set(CV_CAP_PROP_FRAME_WIDTH, fsize.width);
+	cap.set(CV_CAP_PROP_FRAME_HEIGHT, fsize.height);
+	current_framesize = fsize;
 }
 
-frame_size opencv_camera::DoGetFramesize(){
+frame_size camera_opencv::DoGetFramesize(){
 	return current_framesize;
 }
 

@@ -27,6 +27,7 @@ const std::string FontsPath = "/usr/local/share/fonts/";
 const std::string FontsPath = "";
 #endif
 
+std::string __pack_framesizes_to_string__(const std::deque<frame_size>& fsizes);
 
 camera::camera(type t, const std::string& _dev_name_or_doc_id, couchdb::manager* _cdb_manager,stop_handler _h):
 		_type(t),
@@ -50,7 +51,7 @@ void camera::do_connect_camera_device(boost::system::error_code ec){
 	if (ec)
 		return ;
 
-	if (!capture_ioservice_work_ptr)
+	if (!service_ioservice_work_ptr)
 		return ;
 
 	try{
@@ -78,7 +79,7 @@ void camera::do_connect_camera_device(boost::system::error_code ec){
 				}
 
 
-				std::string url  = main_doc->get_property<std::string>(CameraDocumentProps::Url,"");
+				std::string url  = main_doc->get_property<std::string>(cprops::Url,"");
 				if (url == "")
 					throw std::runtime_error("url not defined");
 
@@ -129,17 +130,43 @@ void camera::do_connect_camera_device(boost::system::error_code ec){
 		std::cout<<"Device name:"<<def.device_name<<std::endl;
 		std::cout<<"Manufacturer:"<<def.manufacturer_name<<std::endl;
 
-		runtime_doc->set_property<std::string>(CameraDocumentProps::CameraState,"ready");
+		runtime_doc->set_property<std::string>(cprops::CameraState,"ready");
+
+
+		//sync framesizes
+		try{
+
+			capturer::format f = get_current_format();
+			std::deque<frame_size> poss_fsizes = f.get_possible_framesizes();
+			main_doc->set_property<std::string>(cprops::PossibleFrameSizes,
+				__pack_framesizes_to_string__(poss_fsizes));
+
+			frame_size db_framesize;
+			db_framesize.from_string(main_doc->get_property<std::string>(cprops::FrameSize,""),frame_size(640,480));
+
+			//setup
+			set_framesize(db_framesize);
+
+			//update database
+			main_doc->set_property<std::string>(cprops::FrameSize,db_framesize.to_string());
+
+		}
+		catch(std::runtime_error& ex){
+			using namespace Utility;
+			journal->Write(ERR,DST_STDERR|DST_SYSLOG,"framesize setup error:%s",ex.what());
+			//TODO: state update
+		}
 
 		//TODO: get/set capture options
 
 		return ;
 	}
 	catch(std::runtime_error& ex){
+
 		std::cerr<<"connect error:"<<ex.what()<<std::endl;
 	}
 
-	if (!capture_ioservice_work_ptr)
+	if (!service_ioservice_work_ptr)
 		return ;
 
 
@@ -166,7 +193,7 @@ void camera::finalize(){
 	controls_doc_ticket = couchdb::document::ticket_ptr();
 
 
-	capture_ioservice_work_ptr = boost::shared_ptr<boost::asio::io_service::work>();
+	service_ioservice_work_ptr = boost::shared_ptr<boost::asio::io_service::work>();
 
 
 
@@ -206,11 +233,11 @@ bool camera::check_and_create_documents2(couchdb::manager* dmanager,
 				break;
 			}			
 		}
-		main_doc->set_property<std::string>(CameraDocumentProps::UniqueId,camera_unique_id);
+		main_doc->set_property<std::string>(cprops::UniqueId,camera_unique_id);
 
 
 		//runtime doc
-		std::string runtime_doc_id = main_doc->get_property<std::string>(CameraDocumentProps::RuntimeDocId,"");
+		std::string runtime_doc_id = main_doc->get_property<std::string>(cprops::RuntimeDocId,"");
 		if (runtime_doc_id != ""){
 			//need cleanup exist document
 			runtime_doc = dmanager->get_document(runtime_doc_id,error_message);
@@ -223,14 +250,14 @@ bool camera::check_and_create_documents2(couchdb::manager* dmanager,
 			if (!runtime_doc)
 				return false;
 			if (runtime_doc->id() != runtime_doc_id)
-				main_doc->set_property<std::string>(CameraDocumentProps::RuntimeDocId, runtime_doc->id());
+				main_doc->set_property<std::string>(cprops::RuntimeDocId, runtime_doc->id());
 		}
 		runtime_doc->add_tag("temp");
 
 
 
 		//controls_doc
-		std::string controls_doc_id = main_doc->get_property<std::string>(CameraDocumentProps::ControlsDocId,"");
+		std::string controls_doc_id = main_doc->get_property<std::string>(cprops::ControlsDocId,"");
 		if (controls_doc_id != ""){
 			controls_doc = dmanager->get_document(controls_doc_id,error_message);
 		}
@@ -241,12 +268,12 @@ bool camera::check_and_create_documents2(couchdb::manager* dmanager,
 				return false;
 			controls_doc_id = controls_doc->id();
 
-			main_doc->set_property<std::string>(CameraDocumentProps::ControlsDocId,controls_doc_id);
+			main_doc->set_property<std::string>(cprops::ControlsDocId,controls_doc_id);
 		}
-		controls_doc->set_property_if_not_exists<int>(CameraDocumentProps::controls_RotateAngle,0);
-		controls_doc->set_property_if_not_exists<bool>(CameraDocumentProps::controls_DisplayCameraName,false);
-		controls_doc->set_property_if_not_exists<bool>(CameraDocumentProps::controls_WriteDateTimeText,false);
-		controls_doc->set_property_if_not_exists<std::string>(CameraDocumentProps::controls_CameraName,"");
+		controls_doc->set_property_if_not_exists<int>(cprops::controls_RotateAngle,0);
+		controls_doc->set_property_if_not_exists<bool>(cprops::controls_DisplayCameraName,false);
+		controls_doc->set_property_if_not_exists<bool>(cprops::controls_WriteDateTimeText,false);
+		controls_doc->set_property_if_not_exists<std::string>(cprops::controls_CameraName,"");
 		std::cout<<"controls_doc_id="<<controls_doc->id()<<std::endl;
 
 		runtime_doc_ticket = runtime_doc->set_change_handler(boost::bind(&camera::runtime_doc_changed,this,_1,_2,_3));
@@ -275,7 +302,7 @@ couchdb::document_ptr camera::find_local_camera_document(const std::string& came
 				boost::property_tree::ptree pt1 = v.second;
 				boost::property_tree::ptree cam_ptree = pt1.get_child("value",boost::property_tree::ptree());
 
-				std::string cam_unique_id = cam_ptree.get(CameraDocumentProps::UniqueId,"");
+				std::string cam_unique_id = cam_ptree.get(cprops::UniqueId,"");
 				if (cam_unique_id == camera_id){
 					std::string doc_id = cam_ptree.get("_id","");
 					return cdb_manager->get_document(doc_id,error_message);
@@ -288,7 +315,7 @@ couchdb::document_ptr camera::find_local_camera_document(const std::string& came
 void camera::service_thread_proc(){
 
 	try{
-		capture_ioservice_work_ptr = boost::shared_ptr<boost::asio::io_service::work>(
+		service_ioservice_work_ptr = boost::shared_ptr<boost::asio::io_service::work>(
 			new boost::asio::io_service::work(service_ioservice));
 		service_ioservice.run();
 	}
@@ -304,10 +331,33 @@ void camera::service_thread_proc(){
 void camera::main_doc_changed(std::string doc_id,std::string property_name,std::string property_value){
 	std::cout<<"main_doc_changed: "<<property_name<<"="<<property_value<<std::endl;
 	using namespace Utility;
-	if (property_name==CameraDocumentProps::Url)
+	if (property_name==cprops::Url)
 		if (_type==c_network){
 			service_ioservice.post(boost::bind(&camera::do_disconnect_camera_device,this));
 		}
+	if (property_name==cprops::FrameSize){
+		frame_size fs;
+		fs.from_string(property_value, frame_size());
+		if (fs==frame_size()){
+			using namespace Utility;
+			journal->Write(NOTICE,DST_SYSLOG|DST_STDERR,"cannot decode framesize: %s",property_value.c_str());
+			return ;
+		}
+		if (fs == get_current_framesize())
+			return ;
+
+		//is a framesize possible ?
+		capturer::format c_f = get_current_format();
+		if (!c_f.check_framesize(fs)){
+			using namespace Utility;
+			journal->Write(NOTICE,DST_SYSLOG|DST_STDERR,"cannot set specified framesize: %s",fs.to_string().c_str());
+			return ;
+		}
+		
+		
+		service_ioservice.post(boost::bind(&camera::do_change_framesize,this,fs));
+	}
+
 }
 
 void camera::main_doc_deleted(){
@@ -366,7 +416,7 @@ void camera::on_state_change(capturer::state old_state,capturer::state new_state
 	}
 
 	if (runtime_doc)
-		runtime_doc->set_property<std::string>(CameraDocumentProps::CameraState,doc_property_value);
+		runtime_doc->set_property<std::string>(cprops::CameraState,doc_property_value);
 
 	if (_type==c_network)
 		if (old_state==capturer::st_Ready){
@@ -382,3 +432,21 @@ void camera::on_state_change(capturer::state old_state,capturer::state new_state
 
 }
 
+//320x200;640x480;800x600
+std::string __pack_framesizes_to_string__(const std::deque<frame_size>& fsizes){
+	std::ostringstream oss;
+	int count = 0;
+	BOOST_FOREACH(frame_size f,fsizes){
+		if (count != 0)
+			oss << ";";
+		oss<<f.width<<"x"<<f.height;
+		count++;
+	}
+	return oss.str();
+}
+
+
+void camera::do_change_framesize(frame_size fs){
+	std::cout<<"framesize change event"<<std::endl;
+	set_framesize(fs);
+}

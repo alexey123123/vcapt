@@ -25,7 +25,7 @@
 
 typedef boost::function<void (std::string)> StopCameraHandler;
 
-namespace CameraDocumentProps{
+namespace cprops{
 	const std::string RuntimeDocId = "runtime_doc_id";
 	const std::string ControlsDocId = "controls_doc_id";
 	const std::string UniqueId = "unique_id";
@@ -117,7 +117,7 @@ private:
 
 	boost::thread service_thread;
 	boost::asio::io_service service_ioservice;
-	boost::shared_ptr<boost::asio::io_service::work> capture_ioservice_work_ptr;
+	boost::shared_ptr<boost::asio::io_service::work> service_ioservice_work_ptr;
 	void service_thread_proc();
 
 
@@ -134,6 +134,7 @@ private:
 	//call for network cams only, when url changed
 	void do_disconnect_camera_device();
 
+	void do_change_framesize(frame_size fs);
 
 	void get_set_capture_options();
 
@@ -152,7 +153,7 @@ private:
 };
 
 
-typedef boost::shared_ptr<camera> CameraPtr;
+
 
 
 #endif//__camera_h__

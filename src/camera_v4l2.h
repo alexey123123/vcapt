@@ -11,10 +11,10 @@
 #include "camera.h"
 
 
-class v4l2_camera: public camera{
+class camera_v4l2: public camera{
 public:
-	v4l2_camera(const std::string& _dev_name_or_doc_id, couchdb::manager* _cdb_manager,stop_handler _h);
-	~v4l2_camera();
+	camera_v4l2(const std::string& _dev_name_or_doc_id, couchdb::manager* _cdb_manager,stop_handler _h);
+	~camera_v4l2();
 
 protected:
 	void DoSetControl(const CameraControl& c, const std::string& new_value);
