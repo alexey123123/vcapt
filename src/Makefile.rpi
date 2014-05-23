@@ -2,7 +2,23 @@ PREFIX=arm-rpi-linux
 CC=$(PREFIX)-gcc
 CXX=$(PREFIX)-g++
 STRIP=$(PREFIX)-strip
-SOURCES = camera.cpp capturer.cpp couchdb.cpp ffmpeg_encoder.cpp libav.cpp manager.cpp opencv_camera.cpp stream.cpp types.cpp v4l2_camera.cpp vcapt2.cpp rpi_openmax.cpp
+SOURCES = 	capturer.cpp \
+		camera.cpp \
+		camera_v4l2.cpp \
+		camera_opencv.cpp \
+		camera_container.cpp \
+		codec.cpp \
+		codec_libav.cpp \
+		codec_rpi.cpp \
+		codec_processor.cpp \
+		couchdb.cpp \
+		filter.cpp \
+		libav.cpp \
+		manager.cpp \
+		stream.cpp \
+		types.cpp \
+		vcapt2.cpp 
+
 
 OBJECTS = $(SOURCES:.cpp=.o)
 TARGET = vcapt

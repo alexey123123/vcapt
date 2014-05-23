@@ -108,14 +108,43 @@ void codec_libav::do_initilalize(const format& f, AVPixelFormat& _codec_pixfmt){
 	av_codec_context->pix_fmt = *selected_fmt;
 
 
+
 	//TODO: this flags depends from container........ 
 	av_codec_context->flags |= CODEC_FLAG_GLOBAL_HEADER;
 
+	AVCodecContext* ctx = av_codec_context;
 
 	switch(av_codec->id){
 	case AV_CODEC_ID_H264:
 		av_codec_context->profile= FF_PROFILE_H264_BASELINE;
-		libav::av_opt_set(av_codec_context->priv_data, "preset", "fast", 0);
+		//av_codec_context->level = 4;
+		//libav::av_opt_set(av_codec_context->priv_data, "preset", "fast", 0);
+		//libav::av_opt_set(av_codec_context->priv_data, "vprofile", "baseline", 0);
+
+		/*
+
+		ctx->bit_rate_tolerance = 0;
+		ctx->rc_max_rate = 0;
+		ctx->rc_buffer_size = 0;
+		ctx->gop_size = 40;
+		ctx->max_b_frames = 3;
+		ctx->b_frame_strategy = 1;
+		ctx->coder_type = 1;
+		ctx->me_cmp = 1;
+		ctx->me_range = 16;
+		ctx->qmin = 10;
+		ctx->qmax = 51;
+		ctx->scenechange_threshold = 40;
+		ctx->flags |= CODEC_FLAG_LOOP_FILTER;
+		ctx->me_method = ME_HEX;
+		ctx->me_subpel_quality = 5;
+		ctx->i_quant_factor = 0.71;
+		ctx->qcompress = 0.6;
+		ctx->max_qdiff = 4;
+		//ctx->directpred = 1;
+		//ctx->flags2 |= CODEC_FLAG2_FASTPSKIP;
+		*/
+
 		break;
 	case AV_CODEC_ID_VP8:
 	case AV_CODEC_ID_VP9:
@@ -129,4 +158,6 @@ void codec_libav::do_initilalize(const format& f, AVPixelFormat& _codec_pixfmt){
 
 	if (libav::avcodec_open2(av_codec_context, av_codec,0) < 0)
 		throw std::runtime_error("avcodec_open2 error");
+
+	std::cout<<"codec_libav::do_initilalize ok"<<std::endl;
 }

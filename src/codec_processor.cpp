@@ -109,21 +109,24 @@ void codec_processor::do_processor_work(boost::system::error_code ec){
 				}
 				l1.unlock();
 			
+
+
+				//some statistics
+				high_resolution_clock::time_point stop = high_resolution_clock::now();
+				encoded_frame_counter++;
+
+
+				uint64_t enc_duration = duration_cast<milliseconds> (stop - start).count();
+
+				summary_encode_time_ms += enc_duration;
+				if (enc_duration > maximum_encode_time_ms)
+					maximum_encode_time_ms += enc_duration;
+				if (enc_duration < minimum_encode_time_ms)
+					minimum_encode_time_ms = enc_duration;
 			}
 
 
-			//some statistics
-			high_resolution_clock::time_point stop = high_resolution_clock::now();
-			encoded_frame_counter++;
 
-
-			uint64_t enc_duration = duration_cast<milliseconds> (stop - start).count();
-
-			summary_encode_time_ms += enc_duration;
-			if (enc_duration > maximum_encode_time_ms)
-				maximum_encode_time_ms += enc_duration;
-			if (enc_duration < minimum_encode_time_ms)
-				minimum_encode_time_ms = enc_duration;
 
 			exceptions_count = 0;
 		}

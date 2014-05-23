@@ -129,9 +129,21 @@ void av_container_stream::alloc_stream(const std::string& container_name, AVCode
 
 
 void av_container_stream::do_process_packet(packet_ptr p){
+	
+	AVPacket* avpacket = &(p->p);
+
+	//wait keyframe
+	if (!kf_found){
+		kf_found = (avpacket->flags & AV_PKT_FLAG_KEY) > 0;
+  		if (!kf_found)
+  			return ;
+	}
+		
+
+	
 	//write packet to container
 
-	AVPacket* avpacket = &(p->p);
+
 	avpacket->stream_index = video_stream->id;
 
 
@@ -143,20 +155,11 @@ void av_container_stream::do_process_packet(packet_ptr p){
 	avpacket->pts = libav::av_rescale_q_rnd(avpacket->pts, r1, video_stream->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
 	avpacket->dts = avpacket->pts;
 	//avpacket->duration = libav::av_rescale_q(avpacket->duration, r1, video_stream->time_base);
-	avpacket->duration = 30;
+	avpacket->duration = 0;	
 
-	
-
-	//kf_found =  ? true
-
-	if (!kf_found)
-		if (avpacket->flags & AV_PKT_FLAG_KEY)
-			kf_found = true;
-
-	if (kf_found){
-		//transfer packet to stream
-		libav::av_write_frame(format_context,avpacket);
-	}
+	//transfer packet to stream
+	std::cout<<"avpacket->pts="<<avpacket->pts<<std::endl;
+	libav::av_write_frame(format_context,avpacket);
 
 
 }
@@ -225,7 +228,7 @@ void network_stream_buffer::write_data_handler(buffer_ptr bptr, boost::system::e
 	boost::unique_lock<boost::recursive_mutex> l1(buffers_mutex);
 	sent_packets_count--;
 	if (!ec){
-		std::cout<<"bytes_transferred:"<<bytes_transferred<<std::endl;
+		//std::cout<<"bytes_transferred:"<<bytes_transferred<<std::endl;
 		if (bptr->size() != bytes_transferred)
 			std::cout<<"------------TRANSFERED only "<<bytes_transferred<<" bytes from "<<bptr->size()<<std::endl;
 

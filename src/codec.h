@@ -37,11 +37,16 @@ public:
 	AVCodecContext* get_avcodec_context()
 		{return do_get_avcodec_context();};
 
+	//some codecs may contain header data inside (codec_rpi)
+// 	buffer_ptr get_header_of_stream()
+// 		{return do_get_header_of_stream();};
+
 protected:
 
 	virtual packet_ptr do_process_frame(capturer::frame_ptr fptr) = 0;
 	virtual void do_initilalize(const format& f, AVPixelFormat& _codec_pixfmt) = 0;
 	virtual AVCodecContext* do_get_avcodec_context() = 0;
+	//virtual buffer_ptr do_get_header_of_stream() = 0;
 
 	AVFrame* resize_and_convert_format(AVFrame* src,int dst_width,int dst_height, AVPixelFormat dst_pixfmt,std::string& error_message);
 private:
