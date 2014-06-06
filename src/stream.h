@@ -7,6 +7,7 @@
 #include <boost/function.hpp>
 #include <boost/thread/recursive_mutex.hpp>
 #include <boost/thread/locks.hpp>
+#include <boost/date_time/posix_time/ptime.hpp>
 
 #include "libav.h"
 #include "types.h"
@@ -83,11 +84,21 @@ public:
 														tcp_client_ptr c);
 
 	
-//  TODO:
-// 	static stream_ptr create_file_stream(const std::string& container_name, AVCodec* av_codec, stop_handler sh,
-// 		const boost::filesystem::path& p,
-// 		boost::chrono::steady_clock::duration _max_duration,
-// 		boost::int64_t _max_filesize);
+	//file-stream progress handler
+	//if return false - need stop stream
+	typedef boost::function<bool (stream*,
+									boost::system::error_code,
+									boost::chrono::steady_clock::duration,
+									boost::int64_t)> progress_handler;
+
+ 	static stream_ptr create_file_stream(const std::string& container_name, 
+		AVCodec* av_codec, 
+		stop_handler sh,
+		progress_handler ph,
+ 		const boost::filesystem::path& p,
+		boost::posix_time::ptime start_ptime,	//start timepoint (stream cannot start before this time)
+ 		boost::chrono::steady_clock::duration _max_duration,
+ 		boost::int64_t _max_filesize);
 
 
 
@@ -111,6 +122,7 @@ private:
 	boost::filesystem::path file_path;
 	boost::chrono::steady_clock::duration max_duration;
 	boost::int64_t max_filesize;
+	progress_handler _progress_handler;
 
 
 	//network stream stuff

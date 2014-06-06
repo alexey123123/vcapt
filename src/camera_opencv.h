@@ -5,10 +5,13 @@
 
 #include "camera.h"
 
+static const char* WindowsCameraDevname="video_windows";
+
 class camera_opencv: public camera{
 public:
-	camera_opencv(const std::string& _dev_name_or_doc_id, couchdb::manager* _cdb_manager,stop_handler _h,
-		bool _windows_internal_cam = true);
+	
+	
+	camera_opencv(const capturer::connect_parameters& _cp,state_change_handler _state_h, stop_handler _stop_h);
 	~camera_opencv();
 
 protected:
@@ -36,7 +39,6 @@ protected:
 
 
 private:
-	bool windows_internal_cam;
 	cv::VideoCapture cap;
 	frame_size current_framesize;
 	format current_format;

@@ -23,34 +23,6 @@
 #include "couchdb.h"
 #include "capturer.h"
 
-typedef boost::function<void (std::string)> StopCameraHandler;
-
-namespace cprops{
-	const std::string RuntimeDocId = "runtime_doc_id";
-	const std::string ControlsDocId = "controls_doc_id";
-	const std::string UniqueId = "unique_id";
-
-	const std::string Url = "url";
-
-
-	const std::string NetworkCameraType = "net_camera_type";
-
-
-	const std::string ConnectError = "connect_error";
-	const std::string CameraState = "connect_state";
-
-	const std::string FrameSize = "framesize";
-	const std::string PossibleFrameSizes = "framesizes";
-	const std::string MinFramesize = "min_framesize";
-	const std::string MaxFramesize = "max_framesize";
-
-
-	const std::string controls_DisplayCameraName = "display_camera_name";
-	const std::string controls_CameraName = "name";
-	const std::string controls_WriteDateTimeText = "write_datetime";
-	const std::string controls_RotateAngle = "rotate_angle";
-
-}
 
 
 
@@ -63,71 +35,51 @@ public:
 		c_network
 	};
 	typedef boost::function<void (std::string)> stop_handler;
+	typedef boost::function<void (capturer::state,capturer::state)> state_change_handler;
 
-	camera(type t, const std::string& _dev_name_or_doc_id, couchdb::manager* _cdb_manager,stop_handler _h);
+
+	camera(const capturer::connect_parameters& _cp,state_change_handler _state_h, stop_handler _stop_h);
 	virtual ~camera();
 
-	void start_connection(unsigned int _delay_ms);
+
+	//TODO:
+	void set_connect_parameters(const connect_parameters& _cp)
+		{conn_params = _cp;};
+	const capturer::connect_parameters& get_connect_parameters() const
+		{return conn_params; };
 
 
-	std::string get_camera_unique_id()
-		{return camera_unique_id;};
-
-	std::string get_local_camera_devname()
-		{return dev_name_or_doc_id;};
-
+	void restart_connection()
+		{do_disconnect_camera_device();};
 
 protected:
-	void main_doc_changed(std::string,std::string,std::string);
+
+
 	void main_doc_deleted();
 	void runtime_doc_changed(std::string,std::string,std::string);
 	void controls_doc_changed(std::string,std::string,std::string);
 
 	void on_state_change(capturer::state old_state,capturer::state new_state);
 private:
-	type _type;
-	std::string dev_name_or_doc_id;
+	
+	capturer::connect_parameters conn_params;
 	couchdb::manager* cdb_manager;
 	stop_handler _stop_handler;
+	state_change_handler _state_change_handler;
 	Utility::Journal* journal;
 
+	void start_connection(unsigned int _delay_ms);
 	void finalize();
-
-	bool check_and_create_documents2(couchdb::manager* dmanager,
-		const std::string& camera_unique_id,
-		std::string& error_message);
-
-
-	couchdb::document_ptr main_doc;
-	couchdb::document_ptr runtime_doc;
-	couchdb::document_ptr controls_doc;
-	couchdb::document::ticket_ptr main_doc_ticket;
-	couchdb::document::ticket_ptr runtime_doc_ticket;
-	couchdb::document::ticket_ptr controls_doc_ticket;
-
-
-
-
-
-
-
-	std::string camera_unique_id;
-
-
+	bool finalization;
 
 	boost::thread service_thread;
 	boost::asio::io_service service_ioservice;
 	boost::shared_ptr<boost::asio::io_service::work> service_ioservice_work_ptr;
 	void service_thread_proc();
 
-
-
-	couchdb::document_ptr find_local_camera_document(const std::string& camera_id,std::string& error_message);
-
 	void do_connect_camera_device(boost::system::error_code ec);
 	boost::asio::steady_timer connect_camera_st;
-
-
+	unsigned int connect_attempts_count;
 
 
 

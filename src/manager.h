@@ -64,13 +64,17 @@ private:
 
 	typedef boost::shared_ptr<camera_container> camera_container_ptr;
 	std::deque<camera_container_ptr> cameras;
-	void on_camera_finalize(std::string camera_id);
+	void camera_container_stop_handler(camera_container*);
 
 
 
 	void i_thread_finalize_codec_processor(camera_container* _container, codec_processor* _processor);
 
 	void check_database_and_start_network_cams();
+
+
+	couchdb::document_ptr find_local_camera_document(const std::string& camera_unique_id);
+	couchdb::document_ptr main_doc;
 };
 
 #endif//__manager_h__

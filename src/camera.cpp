@@ -29,24 +29,56 @@ const std::string FontsPath = "";
 
 std::string __pack_framesizes_to_string__(const std::deque<frame_size>& fsizes);
 
-camera::camera(type t, const std::string& _dev_name_or_doc_id, couchdb::manager* _cdb_manager,stop_handler _h):
-		_type(t),
-		dev_name_or_doc_id(_dev_name_or_doc_id),
-			cdb_manager(_cdb_manager),
-			_stop_handler(_h),
-		connect_camera_st(service_ioservice){
+camera::camera(const capturer::connect_parameters& _cp,state_change_handler _state_h, stop_handler _stop_h):
+		conn_params(_cp),_state_change_handler(_state_h),_stop_handler(_stop_h),
+		connect_camera_st(service_ioservice),
+		connect_attempts_count(0),
+		finalization(false){
 
 	journal = Utility::Journal::Instance();
 
 	//start service thread
 	service_thread = boost::thread(boost::bind(&camera::service_thread_proc,this));
 
+	start_connection(1000);
 
 }
 camera::~camera(){
 	finalize();
 }
 
+void camera::do_connect_camera_device(boost::system::error_code ec){
+	if (ec)
+		return ;
+
+	if (!service_ioservice_work_ptr)
+		return ;
+
+	try{
+
+		//connect
+		connect(get_connect_parameters());
+
+		connect_attempts_count = 0;
+
+		return ;
+	}
+	catch(std::runtime_error& ex){
+		connect_attempts_count++;
+		std::cerr<<"connect error:"<<ex.what()<<std::endl;
+	}
+
+	if (!service_ioservice_work_ptr)
+		return ;
+
+
+	//connect again
+	if (connect_attempts_count < conn_params.max_connect_attempts)
+		start_connection(conn_params.connect_attempts_interval); else
+		_stop_handler("connection attempts limit exceeded");
+
+}
+/*
 void camera::do_connect_camera_device(boost::system::error_code ec){
 	if (ec)
 		return ;
@@ -62,20 +94,20 @@ void camera::do_connect_camera_device(boost::system::error_code ec){
 		capturer::connect_parameters s;
 		switch(_type){
 			case c_local:{
-				s.connection_string = dev_name_or_doc_id;
+				s.connection_string = url;
 				break;
 			}
 			case c_network:{
 				//get doc
 				
 				if (!main_doc){
-					if (!check_and_create_documents2(cdb_manager,dev_name_or_doc_id,error_message))
+					if (!check_and_create_documents2(cdb_manager,url,error_message))
 						throw std::runtime_error("documents init error:"+error_message);
 
 					main_doc->set_property<std::string>("name",get_definition().device_name);
 					main_doc->set_property<std::string>("manufacturer",get_definition().manufacturer_name);
 
-					camera_unique_id = dev_name_or_doc_id;
+					camera_unique_id = url;
 				}
 
 
@@ -175,7 +207,7 @@ void camera::do_connect_camera_device(boost::system::error_code ec){
 
 
 }
-
+*/
 void camera::start_connection(unsigned int _delay_ms){
 	connect_camera_st.expires_from_now(boost::chrono::milliseconds(_delay_ms));
 	connect_camera_st.async_wait(boost::bind(&camera::do_connect_camera_device,this,boost::asio::placeholders::error));}
@@ -184,14 +216,7 @@ void camera::start_connection(unsigned int _delay_ms){
 
 
 void camera::finalize(){
-
-
-
-
-	main_doc_ticket = couchdb::document::ticket_ptr();
-	runtime_doc_ticket = couchdb::document::ticket_ptr();
-	controls_doc_ticket = couchdb::document::ticket_ptr();
-
+	finalization = true;
 
 	service_ioservice_work_ptr = boost::shared_ptr<boost::asio::io_service::work>();
 
@@ -202,6 +227,8 @@ void camera::finalize(){
 	connect_camera_st.cancel(ec);
 	service_thread.join();	
 }
+
+/*
 bool camera::check_and_create_documents2(couchdb::manager* dmanager,
 	const std::string& camera_unique_id,
 	std::string& error_message){
@@ -284,32 +311,7 @@ bool camera::check_and_create_documents2(couchdb::manager* dmanager,
 
 		return true;
 }
-
-
-couchdb::document_ptr camera::find_local_camera_document(const std::string& camera_id,std::string& error_message){
-	//get list of local-cameras
-	boost::property_tree::ptree cameras_ptree;
-
-	if (!cdb_manager->load_ptree_document("_design/vcapt/_view/local_cameras",cameras_ptree,error_message))
-		throw std::runtime_error("_design/vcapt/_view/local_cameras error:"+error_message+" (db no initialized?)");
-
-	boost::optional<int> cameras_count = cameras_ptree.get_optional<int>("total_rows");
-	if (!cameras_count)
-		throw std::runtime_error("couch-db incorrect answer: total_rows missed");
-	if (cameras_count)
-		if ((*cameras_count)>0)
-			BOOST_FOREACH(boost::property_tree::ptree::value_type &v,cameras_ptree.get_child("rows")){
-				boost::property_tree::ptree pt1 = v.second;
-				boost::property_tree::ptree cam_ptree = pt1.get_child("value",boost::property_tree::ptree());
-
-				std::string cam_unique_id = cam_ptree.get(cprops::UniqueId,"");
-				if (cam_unique_id == camera_id){
-					std::string doc_id = cam_ptree.get("_id","");
-					return cdb_manager->get_document(doc_id,error_message);
-				}
-		}
-	return couchdb::document_ptr();
-}
+*/
 
 
 void camera::service_thread_proc(){
@@ -328,45 +330,16 @@ void camera::service_thread_proc(){
 
 
 
-void camera::main_doc_changed(std::string doc_id,std::string property_name,std::string property_value){
-	std::cout<<"main_doc_changed: "<<property_name<<"="<<property_value<<std::endl;
-	using namespace Utility;
-	if (property_name==cprops::Url)
-		if (_type==c_network){
-			service_ioservice.post(boost::bind(&camera::do_disconnect_camera_device,this));
-		}
-	if (property_name==cprops::FrameSize){
-		frame_size fs;
-		fs.from_string(property_value, frame_size());
-		if (fs==frame_size()){
-			using namespace Utility;
-			journal->Write(NOTICE,DST_SYSLOG|DST_STDERR,"cannot decode framesize: %s",property_value.c_str());
-			return ;
-		}
-		if (fs == get_current_framesize())
-			return ;
-
-		//is a framesize possible ?
-		capturer::format c_f = get_current_format();
-		if (!c_f.check_framesize(fs)){
-			using namespace Utility;
-			journal->Write(NOTICE,DST_SYSLOG|DST_STDERR,"cannot set specified framesize: %s",fs.to_string().c_str());
-			return ;
-		}
-		
-		
-		service_ioservice.post(boost::bind(&camera::do_change_framesize,this,fs));
-	}
-
-}
 
 void camera::main_doc_deleted(){
+	/*
 	using namespace Utility;
 	journal->Write(NOTICE,DST_SYSLOG|DST_STDOUT,"camera document erased. stop camera-object");
 	//delete runtime document
 	if (runtime_doc)
 		cdb_manager->delete_document(runtime_doc);
 	_stop_handler(camera_unique_id);
+	*/
 }
 
 
@@ -393,7 +366,22 @@ void camera::do_disconnect_camera_device(){
 
 
 
+void camera::on_state_change(capturer::state old_state,capturer::state new_state){
 
+	if (finalization)
+		return ;
+
+	_state_change_handler(old_state,new_state);
+
+	if (old_state==capturer::st_Ready)
+		if (new_state != st_Setup){
+			//link error ?
+			disconnect();
+			start_connection(get_connect_parameters().connect_attempts_interval);
+		}
+}
+
+/*
 void camera::on_state_change(capturer::state old_state,capturer::state new_state){
 
 	std::string doc_property_value = "";
@@ -419,11 +407,7 @@ void camera::on_state_change(capturer::state old_state,capturer::state new_state
 		runtime_doc->set_property<std::string>(cprops::CameraState,doc_property_value);
 
 	if (_type==c_network)
-		if (old_state==capturer::st_Ready){
-			//link error ?
-			disconnect();
-			start_connection(1000);
-		}
+
 
 
 	
@@ -432,18 +416,9 @@ void camera::on_state_change(capturer::state old_state,capturer::state new_state
 
 }
 
-//320x200;640x480;800x600
-std::string __pack_framesizes_to_string__(const std::deque<frame_size>& fsizes){
-	std::ostringstream oss;
-	int count = 0;
-	BOOST_FOREACH(frame_size f,fsizes){
-		if (count != 0)
-			oss << ";";
-		oss<<f.width<<"x"<<f.height;
-		count++;
-	}
-	return oss.str();
-}
+
+*/
+
 
 
 void camera::do_change_framesize(frame_size fs){

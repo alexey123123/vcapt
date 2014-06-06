@@ -66,6 +66,8 @@ public:
 		//	-	<ip адрес>:<порт> для IP-камеры
 		std::string connection_string;
 		std::size_t maximum_buffer_size_mb;
+		unsigned int		max_connect_attempts;
+		unsigned int		connect_attempts_interval;
 	};
 	void connect(const connect_parameters& params);
 	void disconnect();
@@ -75,8 +77,7 @@ public:
 		std::string device_name;
 		std::string manufacturer_name;
 		std::string bus_info;
-
-		std::string unique_string;
+		std::string slot_name; //for v4l2 devices
 	};
 	definition get_definition() const
 		{return DoGetDefinition();};
@@ -124,7 +125,8 @@ public:
 		st_InitializationError,
 		st_ConnectError,	//for network cams
 		st_CaptureError,
-		st_Ready
+		st_Ready,
+		st_Setup
 	};
 	state get_state() const ;
 
@@ -148,6 +150,7 @@ public:
 
 
 protected:
+
 
 	struct capabilities{
 

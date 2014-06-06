@@ -57,34 +57,31 @@ void codec_processor::do_processor_work(boost::system::error_code ec){
 
 		int work_interval_ms = 30;
 		try{
+
+
+
 			using namespace boost::chrono;
 			high_resolution_clock::time_point start = high_resolution_clock::now();
 
 			//capture frame
 			capturer::frame_ptr fptr = _camera->get_frame(last_frame_tp);
-			capturer::state st = fptr->capturer_state;
-
-			switch(st){
-			case capturer::st_Ready:{
-				break;
-									}
-			default:{
-				//need generate state-picture
+			if (!fptr){
+				//generate blank frame for state _camera->get_state();
 				if (!blank_frame){
 					blank_frame = generate_blank_frame2(_camera->get_current_framesize().width,_camera->get_current_framesize().height);
 					if (!blank_frame)
 						throw std::runtime_error("cannot generate blank frame");
 				}
+				std::cout<<"blank!"<<std::endl;
 				fptr = blank_frame;
 				fptr->tp = boost::chrono::steady_clock::now();
-				fptr->capturer_state = st;
+				fptr->capturer_state = _camera->get_state();
 
 				work_interval_ms = 300;
-				break;
-
-					}
+			} else{
+				work_interval_ms = 30;
 			}
-			
+
 			
 
 			packet_ptr pptr = _codec->process_frame(fptr);
@@ -132,6 +129,7 @@ void codec_processor::do_processor_work(boost::system::error_code ec){
 		}
 		catch(std::runtime_error& ex){
 			exceptions_count++;
+			std::cout<<"codec_processor exception:"<<ex.what()<<std::endl;
 
 			if (exceptions_count > MAX_STREAM_EXCEPTIONS_COUNT){
 				using namespace Utility;

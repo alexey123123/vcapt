@@ -54,6 +54,7 @@ void capturer::connect(const connect_parameters& params){
 }
 void capturer::disconnect(){
 	try{
+		set_state(st_Initialization);
 		DoDisconnect();
 	}
 	catch(...){
@@ -63,15 +64,21 @@ void capturer::disconnect(){
 }
 
 capturer::frame_ptr capturer::get_frame(boost::chrono::steady_clock::time_point last_frame_tp){
-	frame_ptr fptr = DoGetFrame3(last_frame_tp);
 
-	if (!fptr){
-		fptr = frame_ptr(new frame());
+	frame_ptr fptr;
+
+	state st = get_state();
+
+	switch(st){
+		case st_Ready:
+			fptr = DoGetFrame3(last_frame_tp);			
+			break;
+	}
+	if (fptr){
 		fptr->tp = boost::chrono::steady_clock::now();
-	}		
+		fptr->capturer_state = st;
 
-	fptr->capturer_state = get_state();
-
+	}
 	return fptr;
 }
 
@@ -141,7 +148,7 @@ void capturer::return_frame(boost::chrono::steady_clock::time_point tp, void* op
 
 void capturer::set_framesize(const frame_size& fsize){
 	try{
-		set_state(st_Initialization);
+		set_state(st_Setup);
 		DoSetFramesize(fsize);
 		set_state(st_Ready);
 
@@ -157,6 +164,7 @@ void capturer::set_framesize(const frame_size& fsize){
 
 void capturer::set_state(state _state){
 	state prev_value = capturer_state.exchange(_state,boost::memory_order_release);
+
 
 	if (_state != prev_value){
 		on_state_change(prev_value,_state);

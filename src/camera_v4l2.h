@@ -13,8 +13,12 @@
 
 class camera_v4l2: public camera{
 public:
-	camera_v4l2(const std::string& _dev_name_or_doc_id, couchdb::manager* _cdb_manager,stop_handler _h);
+	camera_v4l2(const capturer::connect_parameters& _cp,state_change_handler _state_h, stop_handler _stop_h);
 	~camera_v4l2();
+
+
+
+	static bool read_v4l2_device_definition(const std::string& devname,int fd,capturer::definition& def);
 
 protected:
 	void DoSetControl(const CameraControl& c, const std::string& new_value);
@@ -26,7 +30,7 @@ protected:
 
 	//new iface
 
-	void DoConnect3(const connect_parameters& params);
+	void DoConnect3(const capturer::connect_parameters& params);
 	void DoDisconnect();
 	frame_ptr DoGetFrame3(boost::chrono::steady_clock::time_point last_frame_tp);
 	void DoReturnFrame3(boost::chrono::steady_clock::time_point tp, void* opaque);

@@ -1,11 +1,7 @@
 #include "camera_opencv.h"
 
-camera_opencv::camera_opencv(const std::string& _dev_name_or_doc_id, couchdb::manager* _cdb_manager,stop_handler _h,
-	bool _windows_internal_cam):
-		camera(
-			_windows_internal_cam? camera::c_local : camera::c_network,
-			_dev_name_or_doc_id,_cdb_manager,_h),
-	windows_internal_cam(_windows_internal_cam){
+camera_opencv::camera_opencv(const capturer::connect_parameters& _cp,state_change_handler _state_h, stop_handler _stop_h):
+		camera(_cp,_state_h,_stop_h){
 
 
 		current_format.ffmpeg_pixfmt = AV_PIX_FMT_BGR24;
@@ -25,7 +21,8 @@ camera_opencv::~camera_opencv(){
 
 capturer::definition camera_opencv::DoGetDefinition() const{
 	capturer::definition _definition;
-	if (windows_internal_cam){
+	capturer::connect_parameters cp = get_connect_parameters();
+	if (cp.connection_string==std::string(WindowsCameraDevname)){
 		_definition.bus_info = "windows";
 		_definition.device_name = "internal_camera";
 		_definition.manufacturer_name = "lenovo";
@@ -34,7 +31,6 @@ capturer::definition camera_opencv::DoGetDefinition() const{
 		_definition.device_name = "mjpeg-camera";
 		_definition.manufacturer_name = "unknown";
 	}
-	_definition.unique_string = _definition.manufacturer_name+"_"+_definition.device_name+"_"+_definition.bus_info;
 	return _definition;
 }
 capturer::capabilities camera_opencv::DoGetCapabilities() const{
@@ -50,9 +46,9 @@ void camera_opencv::DoConnect3(const capturer::connect_parameters& params){
 
 	try{
 
-		if (windows_internal_cam)
+		if (get_connect_parameters().connection_string==std::string(WindowsCameraDevname))
 			cap.open(0); else
-			cap.open(params.connection_string);
+			cap.open(get_connect_parameters().connection_string);
 
 		if (!cap.isOpened())
 			throw std::runtime_error("");

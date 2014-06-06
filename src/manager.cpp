@@ -5,8 +5,12 @@
 
 #include <system/Platform.h>
 
+#include <utility/Sha.h>
+
 #include "manager.h"
 #include "camera.h"
+
+#include "camera_opencv.h"
 
 const unsigned short UserTcpPortNum	= 5089;
 const unsigned short SystemTcpPortNum = 5090;
@@ -41,7 +45,9 @@ manager::manager(Utility::Options* options):
 	videodevices["/dev/video4"] = 0;
 	videodevices["/dev/video5"] = 0;
 	//for win32 debug
-	videodevices["video_windows"] = 0;
+	videodevices[std::string(WindowsCameraDevname)] = 0;
+
+
 	local_devices_scan_timer.expires_from_now(boost::chrono::milliseconds(1000));
 	local_devices_scan_timer.async_wait(boost::bind(&manager::do_local_devices_scan,this,boost::asio::placeholders::error));
 
@@ -75,29 +81,34 @@ manager::~manager(){
 
 
 void manager::network_camera_doc_changed(const std::string& doc_id, const boost::property_tree::ptree& document_ptree){
-	printf("network_camera_doc_changed 1\n");
-	if (document_ptree.get<std::string>("tag1","")=="network_camera"){
-		std::string doc_id = document_ptree.get<std::string>("_id","");
-		if (doc_id!="")
-			internal_ioservice.post(boost::bind(&manager::i_thread_network_camera_doc_changed,this,doc_id,document_ptree));
-	}
-	printf("network_camera_doc_changed 2\n");
+	std::string device_tags = document_ptree.get<std::string>("device_tags","");
+	if (device_tags.find(cprops::NetworkCameraTag))
+		internal_ioservice.post(boost::bind(&manager::i_thread_network_camera_doc_changed,this,doc_id,document_ptree));
+
 
 }
 void manager::i_thread_network_camera_doc_changed(std::string doc_id, boost::property_tree::ptree document_ptree){
 	std::cout<<"network_camera_doc_changed ("<<doc_id<<")"<<std::endl;
 	camera_container_ptr cc_ptr;
 	BOOST_FOREACH(cc_ptr,cameras)
-		if (cc_ptr->get_camera()->get_camera_unique_id()== doc_id)
+		if (cc_ptr->camera_id() == doc_id)
 			return ;
+	std::string error_message;
+	couchdb::document_ptr d = cdb_manager.get_document(doc_id,error_message);
+	if (d){
+		try{
+			camera_container_ptr cptr(new camera_container(&cdb_manager, d,boost::bind(&manager::camera_container_stop_handler,this,_1)));
+			cameras.push_back(cptr);
+		}
+		catch(std::runtime_error& ex){
+			using namespace Utility;
+			Journal::Instance()->Write(ERR,DST_STDERR|DST_SYSLOG,"cannot start network cam (id:%s): %s",
+				d->id().c_str(),
+				ex.what());
 
+		}
 
-	//New camera!
-	camera* c1 = new camera_opencv(doc_id,&cdb_manager, boost::bind(&manager::on_camera_finalize,this,_1));
-	c1->start_connection(300);
-	camera_container_ptr cptr(new camera_container(c1));
-	cameras.push_back(cptr);
-
+	}
 }
 
 
@@ -169,13 +180,14 @@ void manager::check_database_and_start_network_cams(){
 					
 					if (main_doc->have_tag("network_camera")){
 						try{
-							//TODO:
-// 							camera_container_ptr cptr(new camera_container());
-// 							cameras.push_back(cptr);
-// 							cptr->_camera = new opencv_camera(*doc_id,&cdb_manager, boost::bind(&manager::on_camera_finalize,this,_1),false);
-// 							cptr->_camera->start_connection(100);
+ 							camera_container_ptr cptr(new camera_container(&cdb_manager,main_doc, boost::bind(&manager::camera_container_stop_handler,this,_1)));
+ 							cameras.push_back(cptr);
 						}
-						catch(...){
+						catch(std::runtime_error& ex){
+							using namespace Utility;
+							Journal::Instance()->Write(ERR,DST_STDERR|DST_SYSLOG,"cannot start network cam (id:%s): %s",
+								main_doc->id().c_str(),
+								ex.what());
 
 						}
 					}
@@ -346,20 +358,36 @@ codec_container_ptr manager::get_codec_container(camera* cam, client_parameters&
 void manager::do_videodev_appearance(const std::string& devname){
 	//std::cout<<"appearance:"<<devname<<std::endl;
 	try{
-
-		camera* c1 = 0;
-#if defined(Win32Platform)
-		c1 = new camera_opencv(devname,&cdb_manager, boost::bind(&manager::on_camera_finalize,this,_1),true);
-#elif defined(LinuxPlatform)
-		c1 = new camera_v4l2(devname,&cdb_manager, boost::bind(&manager::on_camera_finalize,this,_1));
+		//TODO: try to read unique camera identifier
+#if defined(LinuxPlatform)
+		capturer::definition def;
+		if (!camera_v4l2::read_v4l2_device_definition(devname,-1,def))
+			throw std::runtime_error("cannot read device definition of "+devname);
+		std::string s1 = def.bus_info + def.device_name + def.manufacturer_name + def.slot_name;
+		std::string unique_id =  Utility::Sha::calc((unsigned char*)s1.c_str(),s1.size());
+#else
+		std::string unique_id = "windows_cam";
 #endif
 
-		camera_container_ptr cptr(new camera_container(c1));
-		cameras.push_back(cptr);
-		c1->start_connection(100);
-	}
-	catch(...){
+		//find/create document
+		std::string error_message;
+		main_doc = find_local_camera_document(unique_id);
+		if (!main_doc){
+			main_doc = cdb_manager.create_document(error_message);
+			main_doc->add_tag(cprops::LocalCameraTag);
+			main_doc->set_property<std::string>(cprops::UniqueId,unique_id);
+		}
+		main_doc->set_property<std::string>(cprops::Url,devname);
 
+
+		//create container
+
+		camera_container_ptr cptr(new camera_container(&cdb_manager,main_doc,boost::bind(&manager::camera_container_stop_handler,this,_1)));
+		cameras.push_back(cptr);		
+	}
+	catch(std::runtime_error& ex){
+		using namespace Utility;
+		Journal::Instance()->Write(ERR,DST_SYSLOG|DST_STDERR,"cannot dispatch videodev appearance:%s",ex.what());
 	}
 }
 void manager::do_videodev_disappearance(const std::string& devname){
@@ -368,8 +396,9 @@ void manager::do_videodev_disappearance(const std::string& devname){
 }
 
 
-void manager::on_camera_finalize(std::string camera_id){
-	std::cout<<"on_camera_finalize"<<std::endl;
+void manager::camera_container_stop_handler(camera_container*){
+	std::cout<<"camera_container_stop_handler"<<std::endl;
+	//TODO
 }
 
 
@@ -384,7 +413,7 @@ void manager::dispatch_new_client(tcp_client_ptr client){
 		//check camera id
 		camera_container_ptr cptr;
 		BOOST_FOREACH(camera_container_ptr c,cameras)
-			if (c->get_camera()->get_camera_unique_id() == camera_id){
+			if (c->camera_id() == camera_id){
 				cptr = c;
 				break;
 			}
@@ -639,6 +668,33 @@ void manager::internal_thread_proc(){
 
 
 }
+
+couchdb::document_ptr manager::find_local_camera_document(const std::string& camera_unique_id){
+	//get list of local-cameras
+	std::string error_message;
+	boost::property_tree::ptree cameras_ptree;
+
+	if (!cdb_manager.load_ptree_document("_design/vcapt/_view/local_cameras",cameras_ptree,error_message))
+		throw std::runtime_error("_design/vcapt/_view/local_cameras error:"+error_message+" (db no initialized?)");
+
+	boost::optional<int> cameras_count = cameras_ptree.get_optional<int>("total_rows");
+	if (!cameras_count)
+		throw std::runtime_error("couch-db incorrect answer: total_rows missed");
+	if (cameras_count)
+		if ((*cameras_count)>0)
+			BOOST_FOREACH(boost::property_tree::ptree::value_type &v,cameras_ptree.get_child("rows")){
+				boost::property_tree::ptree pt1 = v.second;
+				boost::property_tree::ptree cam_ptree = pt1.get_child("value",boost::property_tree::ptree());
+
+				std::string cam_unique_id = cam_ptree.get(cprops::UniqueId,"");
+				if (cam_unique_id == camera_unique_id){
+					std::string doc_id = cam_ptree.get("_id","");
+					return cdb_manager.get_document(doc_id,error_message);
+				}
+		}
+	return couchdb::document_ptr();
+}
+
 
 
 

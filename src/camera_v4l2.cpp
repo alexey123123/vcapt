@@ -217,8 +217,8 @@ bool do_stop_streaming(int fd, std::string& error_message){
 	return true;
 }
 
-camera_v4l2::camera_v4l2(const std::string& _dev_name_or_doc_id, couchdb::manager* _cdb_manager,stop_handler _h):
-		camera(c_local, _dev_name_or_doc_id,_cdb_manager,_h),
+camera_v4l2::camera_v4l2(const capturer::connect_parameters& _cp,state_change_handler _state_h, stop_handler _stop_h):
+		camera(_cp, _state_h,_stop_h),
 		n_buffers(0),
 		dequeued_buffers_count(0),
 		streaming_state(vs_stopped)
@@ -467,6 +467,71 @@ void camera_v4l2::DoDisconnect(){
 	close_fd();
 }
 
+int open_v4l2_device(const std::string& devname){
+	int fd = -1;
+#if defined(LinuxPlatform)
+	struct stat st;
+
+	if (-1 == stat (devname.c_str(), &st))
+		throw std::runtime_error("cannot identify "+devname);
+
+	if (!S_ISCHR (st.st_mode))
+		throw std::runtime_error(devname+" is not a device");
+
+	fd = open (devname.c_str(), O_RDWR, 0);
+
+	if (-1 == fd)
+		throw std::runtime_error("cannot open "+devname);
+#endif
+	return fd;
+}
+
+bool camera_v4l2::read_v4l2_device_definition(const std::string& devname,int fd,capturer::definition& def){
+	
+	int self_opened_fd = -1;
+	int work_fd = fd;
+	bool _result = true;
+	try{
+		if (fd==-1){
+			//need open and close device
+			self_opened_fd = open_v4l2_device(devname);
+			work_fd = self_opened_fd;
+		}
+
+#if defined(LinuxPlatform)
+		struct v4l2_capability cap;
+
+
+
+		if (-1 == xioctl (work_fd, VIDIOC_QUERYCAP, &cap))
+			throw std::runtime_error(devname +" is no V4L2 device");
+
+		if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE))
+			throw std::runtime_error(devname+" is no video capture device");
+
+
+		def.device_name = std::string((char*)cap.card);
+		def.bus_info = std::string((char*)cap.bus_info);
+		def.manufacturer_name = std::string((char*)cap.driver);
+		def.slot_name = __get_videodevice_slot_name2(devname);
+#endif
+	}
+	catch(...){
+		_result = false;
+	}
+	if (self_opened_fd){
+#if defined(LinuxPlatform)
+		close(self_opened_fd);
+#endif
+	}
+	return _result;
+
+
+
+
+}
+
+
 void camera_v4l2::DoConnect3(const capturer::connect_parameters& params){
 	#if defined(LinuxPlatform)
 
@@ -474,18 +539,8 @@ void camera_v4l2::DoConnect3(const capturer::connect_parameters& params){
 
 	streaming_state = vs_initialization;
 
-	struct stat st;
+	fd = open_v4l2_device(get_connect_parameters().connection_string);
 
-	if (-1 == stat (params.connection_string.c_str(), &st))
-		throw std::runtime_error("cannot identify "+params.connection_string);
-
-	if (!S_ISCHR (st.st_mode))
-		throw std::runtime_error(params.connection_string+" is not a device");
-
-	fd = open (params.connection_string.c_str(), O_RDWR, 0);
-
-	if (-1 == fd)
-		throw std::runtime_error("cannot open "+params.connection_string);
 
 	maximum_buffer_size_mb = params.maximum_buffer_size_mb;
 	videodev_filename = params.connection_string;
@@ -494,30 +549,14 @@ void camera_v4l2::DoConnect3(const capturer::connect_parameters& params){
 
 	std::cout<<"V4L2Capturer: device opened"<<std::endl;
 
-		//инициализаируем ус-во, вытаскиваем форматы
-		struct v4l2_capability cap;
-		struct v4l2_cropcap cropcap;
-		struct v4l2_crop crop;
-		unsigned int min;
-
-		if (-1 == xioctl (fd, VIDIOC_QUERYCAP, &cap))
-			throw std::runtime_error(params.connection_string +" is no V4L2 device");
-
-		if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE))
-			throw std::runtime_error(params.connection_string+" is no video capture device");
-
-
-		v4l2_device_definition.device_name = std::string((char*)cap.card);
-		v4l2_device_definition.bus_info = std::string((char*)cap.bus_info);
-		v4l2_device_definition.manufacturer_name = std::string((char*)cap.driver);
-		std::string slot_name = __get_videodevice_slot_name2(params.connection_string);
-
-		v4l2_device_definition.unique_string = v4l2_device_definition.device_name+"_"+v4l2_device_definition.bus_info+"_"+slot_name;
-
+	if (!read_v4l2_device_definition("",fd,v4l2_device_definition))
+		throw std::runtime_error(get_connect_parameters().connection_string+" is incompatible device");
 
 		/* Select video input, video standard and tune here. */
 
-		
+		struct v4l2_cropcap cropcap;
+		struct v4l2_crop crop;		
+		unsigned int min;
 		CLEAR (cropcap);
 
 		cropcap.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
