@@ -55,7 +55,7 @@ public:
 		int width, int height,
 		unsigned char *dest, int dest_size);
 
-
+	static int av_new_packet(AVPacket *pkt,int size); 	
 	static void av_init_packet(AVPacket* pkt);
 	static void av_free_packet(AVPacket *pkt);
 
@@ -75,6 +75,7 @@ public:
 
 	//libavutil
 	static void av_free(void *ptr);
+	static void *av_malloc(size_t size);
 	static void av_freep(void *ptr);
 	static AVFrame *av_frame_alloc(void);
 	static void av_frame_free(AVFrame **frame);

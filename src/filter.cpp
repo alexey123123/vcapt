@@ -1,6 +1,8 @@
 #include <stdexcept>
 
-#include "Filter.h"
+
+#include "filter.h"
+#include "types.h"
 
 
 #define __av_opt_set_int_list(obj, name, val, term, flags) \
@@ -8,6 +10,10 @@
 	AVERROR(EINVAL) : \
 	libav::av_opt_set_bin(obj, name, (const uint8_t *)(val), \
 	libav::av_int_list_length(val, term) * sizeof(*(val)), flags))
+
+AVFrame* filter::draw_text_in_center(AVFrame* src, const std::string& text_string){
+	return apply_to_frame(src,"drawtext=x=(w*0.5 - text_w*0.5):y=(h*0.5-line_h*0.5):fontsize=20:fontcolor=white:text='"+text_string+"':fontfile="+FontsPath+"couri.ttf:box=1:boxcolor=black");
+}
 
 AVFrame* filter::apply_to_frame(AVFrame* src, const std::string& filter_string){
 
@@ -23,7 +29,8 @@ AVFrame* filter::apply_to_frame(AVFrame* src, const std::string& filter_string){
 		//"video_size=%dx%d:pix_fmt=%d",
 		src->width, src->height, src->format
 		,1, 1,
-		src->sample_aspect_ratio.num, src->sample_aspect_ratio.den
+		//src->sample_aspect_ratio.num, src->sample_aspect_ratio.den
+		src->width, src->height
 		);
 	if ((std::string(args) != last_filter_args)||(filter_string != last_filter_string)){
 		clean();

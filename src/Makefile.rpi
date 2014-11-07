@@ -17,7 +17,11 @@ SOURCES = 	capturer.cpp \
 		manager.cpp \
 		stream.cpp \
 		types.cpp \
-		vcapt2.cpp 
+		vcapt2.cpp \
+		archive_client.cpp \
+		openmax_il_helper.cpp \
+		draw.cpp \
+		camera_openmax.cpp
 
 
 OBJECTS = $(SOURCES:.cpp=.o)
@@ -34,7 +38,14 @@ CXXFLAGS+=-I ../../3party.src/rpi/firmware-master/opt/vc/src/hello_pi/libs
 
 CXXFLAGS+=-fPIC
 CXXFLAGS+=-D__STDC_CONSTANT_MACROS
+
+CXXFLAGS+=-DFMT_CONVERT_DISABLED
+CXXFLAGS+=-DRESIZE_DISABLED
+CXXFLAGS+=-DOPENMAX_IL
+
 CXXFLAGS+=-DRPI
+
+
 LIBS += -L ../../3party.src/couchdb++ -lcouchdb++
 LIBS += -L ../../common/utility -lutility
 LIBS += -L ../../3party.src/rpi/lib

@@ -42,12 +42,12 @@ capturer::~capturer(){
 
 void capturer::connect(const connect_parameters& params){
 	try{
-		DoConnect3(params);
+		do_connect(params);
 		set_state(st_Ready);
 
 		return ;
 	}
-	catch(std::runtime_error& ex){
+	catch(std::runtime_error){
 		//TODO: journal
 	}
 	set_state(st_ConnectError);	
@@ -55,7 +55,7 @@ void capturer::connect(const connect_parameters& params){
 void capturer::disconnect(){
 	try{
 		set_state(st_Initialization);
-		DoDisconnect();
+		do_disconnect();
 	}
 	catch(...){
 		//TODO: journal
@@ -63,7 +63,7 @@ void capturer::disconnect(){
 
 }
 
-capturer::frame_ptr capturer::get_frame(boost::chrono::steady_clock::time_point last_frame_tp){
+frame_ptr capturer::get_frame(boost::chrono::steady_clock::time_point last_frame_tp){
 
 	frame_ptr fptr;
 
@@ -71,7 +71,14 @@ capturer::frame_ptr capturer::get_frame(boost::chrono::steady_clock::time_point 
 
 	switch(st){
 		case st_Ready:
-			fptr = DoGetFrame3(last_frame_tp);			
+			try{
+				fptr = do_get_frame(last_frame_tp);
+			}
+			catch(std::runtime_error& ex){
+				printf("do_get_frame error:%s\n",ex.what());
+				fptr = frame_ptr();
+			}
+			
 			break;
 	}
 	if (fptr){
@@ -87,7 +94,6 @@ AVFrame* capturer::convert_pix_fmt(AVFrame* src,AVPixelFormat dst_pix_fmt,std::s
 	bool ret = true;
 	AVFrame* ret_frame = 0;
 
-	AVPicture pic_bgr24;
 	try{
 
 		//TODO: SwsContext cashe
@@ -131,30 +137,22 @@ AVFrame* capturer::convert_pix_fmt(AVFrame* src,AVPixelFormat dst_pix_fmt,std::s
 }
 
 
-capturer::frame::frame(capturer* c):_capturer(c),avframe(0),opaque_data(0){
 
-};
-capturer::frame::~frame(){
-	if (_capturer)
-		_capturer->return_frame(tp,opaque_data);
-	if (avframe)
-		libav::av_frame_free(&avframe);
-}
 
 void capturer::return_frame(boost::chrono::steady_clock::time_point tp, void* opaque){
-	DoReturnFrame3(tp,opaque);
+	do_return_frame(tp,opaque);
 }
 
 
 void capturer::set_framesize(const frame_size& fsize){
 	try{
 		set_state(st_Setup);
-		DoSetFramesize(fsize);
+		do_set_framesize(fsize);
 		set_state(st_Ready);
 
 		return ;
 	}
-	catch(std::runtime_error& ex){
+	catch(std::runtime_error){
 		//TODO: journal
 	}
 	set_state(st_InitializationError);	

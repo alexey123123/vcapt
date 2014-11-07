@@ -21,11 +21,6 @@
 #define INIT_RETRY_TIMEOUT_SEC 1
 #define BUFFERS_COUNT 5
 
-#if defined(LinuxPlatform)
-const std::string FontsPath = "/usr/local/share/fonts/";
-#elif defined(Win32Platform)
-const std::string FontsPath = "";
-#endif
 
 std::string __pack_framesizes_to_string__(const std::deque<frame_size>& fsizes);
 
@@ -33,7 +28,8 @@ camera::camera(const capturer::connect_parameters& _cp,state_change_handler _sta
 		conn_params(_cp),_state_change_handler(_state_h),_stop_handler(_stop_h),
 		connect_camera_st(service_ioservice),
 		connect_attempts_count(0),
-		finalization(false){
+		finalization(false),
+		current_streaming_state(ss_stopped){
 
 	journal = Utility::Journal::Instance();
 
@@ -422,6 +418,24 @@ void camera::on_state_change(capturer::state old_state,capturer::state new_state
 
 
 void camera::do_change_framesize(frame_size fs){
-	std::cout<<"framesize change event"<<std::endl;
+	std::cout<<"framesize change event ("<<fs.to_string()<<")"<<std::endl;
 	set_framesize(fs);
+}
+
+void camera::change_streaming_state(streaming_state ss){
+	if (!get_capabilities().start_stop_streaming_supported())
+		return ;
+	if (ss==current_streaming_state)
+		return ;
+
+	switch(ss){
+		case ss_started:
+			start_streaming();
+			break;
+		case ss_stopped:
+			stop_streaming();
+			break;
+	}
+
+	current_streaming_state = ss;
 }

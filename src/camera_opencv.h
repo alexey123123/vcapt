@@ -16,7 +16,7 @@ public:
 
 protected:
 
-	void DoDisconnect();
+	void do_disconnect();
 
 	void DoSetControl(const CameraControl& c, const std::string& new_value)
 	{};
@@ -28,14 +28,14 @@ protected:
 
 
 
-	void DoConnect3(const capturer::connect_parameters& params);
-	frame_ptr DoGetFrame3(boost::chrono::steady_clock::time_point last_frame_tp);
-	format DoGetCurrentFormat() const ;
-	void DoSetFramesize(const frame_size& fsize);
-	frame_size DoGetFramesize();
+	void do_connect(const capturer::connect_parameters& params);
+	frame_ptr do_get_frame(boost::chrono::steady_clock::time_point last_frame_tp);
+	format do_get_current_format() const ;
+	void do_set_framesize(const frame_size& fsize);
+	frame_size do_get_framesize();
 
-	definition DoGetDefinition() const;
-	capabilities DoGetCapabilities() const;
+	definition do_get_definition() const;
+	capabilities do_get_capabilities() const;
 
 
 private:

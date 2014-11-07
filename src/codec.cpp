@@ -1,3 +1,5 @@
+#include <boost/foreach.hpp>
+
 #include "codec.h"
 #include "codec_libav.h"
 #include "codec_rpi.h"
@@ -14,15 +16,17 @@ codec::~codec(){
 boost::shared_ptr<codec> codec::create(const format& f){
 
 	//platform depended code
-#if defined(RPI)
+#if defined(OPENMAX_IL)	
 	//TODO: create OpenMax encoder (for H264 or JPEG)
-	codec_ptr rpi_cptr = codec_ptr(new codec_rpi());
-	rpi_cptr->initialize(f);
-	return rpi_cptr;
+	if (f.codec_id == AV_CODEC_ID_H264){
+		codec_ptr rpi_cptr = codec_ptr(new codec_rpi());
+		rpi_cptr->initialize(f);
+		return rpi_cptr;
+	}
 
 #endif
 
-	//create ffmpeg codec
+	//create libav codec
 	codec_ptr cptr = codec_ptr(new codec_libav());
 	cptr->initialize(f);
 	return cptr;
@@ -33,140 +37,30 @@ void codec::initialize(const format& f){
 	_format = f;
 }
 
-packet_ptr codec::process_frame(capturer::frame_ptr fptr){
-
-	//TODO: resizing, print text,...ect
-
+packet_ptr codec::process_frame(frame_ptr fptr){
 
 	//check framesize & frame format
 
-	capturer::frame_ptr fptr_to_encode = fptr;
+	frame_ptr fptr_to_encode = fptr;
+	if (fptr_to_encode){
+		bool need_resize = false;
+		need_resize |= _format.fsize != fptr->get_framesize();
+		need_resize |= (AVPixelFormat)fptr->avframe->format != codec_pixfmt;
 
-	bool need_resize = false;
-
-	//check framesize
-	if ((_format.fsize.width != fptr->avframe->width)||(_format.fsize.height != fptr->avframe->height)){
-		//TODO: if fsize change not enabled (due to CPU limitation)
-		if (0)
-			throw std::runtime_error("frame size change not enabled");
-
-		frame_size fptr_fsize(fptr->avframe->width,fptr->avframe->height);
 		
-		if (_format.fsize > fptr_fsize)
-			throw std::runtime_error("cannot increase frame size");
-
-		need_resize = true;
-	}
-
-	if ((AVPixelFormat)fptr->avframe->format != codec_pixfmt){
-		//TODO: if pixfmt convertation is not enabled (due to CPU limitation)
-		if (0)
-			throw std::runtime_error("frame size change not enabled");
-		need_resize = true;
+		if (need_resize){
+			std::string error_message;
+			fptr_to_encode = f_helper.resize_and_convert(fptr_to_encode,codec_pixfmt,_format.fsize,error_message);
+			if (!fptr_to_encode)
+				throw std::runtime_error(error_message);
+		}
 	}
 
 
-	
-	if (need_resize){
-		//need rescale image
-		std::string error_message;
-		AVFrame* avframe_to_encode = 0;
-		avframe_to_encode = resize_and_convert_format(fptr->avframe,_format.fsize.width,_format.fsize.height,codec_pixfmt,error_message);
-		if (!avframe_to_encode)
-			throw std::runtime_error("resize frame error");
-		fptr_to_encode = capturer::frame_ptr(new capturer::frame());
-		fptr_to_encode->avframe = avframe_to_encode;
-		fptr_to_encode->tp = fptr->tp;
-
-	}
 
 	return do_process_frame(fptr_to_encode);
 }
 
-
-
-
-
-
-
-
-AVFrame* codec::resize_and_convert_format(AVFrame* src,int dst_width,int dst_height, AVPixelFormat dst_pixfmt,std::string& error_message){
-	AVFrame* dst = 0;
-	int res=-55;
-	try{
-		resize_context.update(src->width,src->height,(PixelFormat)src->format,dst_width,dst_height,dst_pixfmt);
-
-
-		dst = libav::av_frame_alloc();
-		dst->width = dst_width;
-		dst->height = dst_height;
-		dst->format = dst_pixfmt;
-		libav::av_frame_get_buffer(dst,1);
-
-		res = libav::sws_scale( resize_context.c ,
-			src->data, src->linesize, 
-			0, 
-			src->height,
-			dst->data, dst->linesize ); 
-		dst->pts = src->pts;
-	}
-	catch(std::runtime_error& ex){
-		if (dst != 0)
-			libav::av_frame_free(&dst);
-		error_message = std::string(ex.what());
-	}
-
-
-
-
-
-	return dst;
-
-}
-
-
-codec::__resize_context::__resize_context(){
-	c = 0;
-	src_width = 0;
-	src_height = 0;
-	src_pix_fmt = AV_PIX_FMT_NONE;
-	dst_width = 0;
-	dst_height = 0;
-	dst_pix_fmt = AV_PIX_FMT_NONE;
-
-}
-codec::__resize_context::~__resize_context(){
-	if (c!=0)
-		libav::sws_freeContext(c);
-}
-
-void codec::__resize_context::update(
-	int _src_width,
-	int _src_height,
-	PixelFormat _src_pix_fmt,
-	int _dst_width,
-	int _dst_height,
-	PixelFormat _dst_pix_fmt){
-
-		if ((_src_width==src_width) &&
-			(_src_height == src_height) &&
-			(_src_pix_fmt == src_pix_fmt) &&
-			(_dst_width == dst_width) &&
-			(_dst_height == dst_height) &&
-			(_dst_pix_fmt == dst_pix_fmt))
-			return ;
-
-		if (c!=0)
-			libav::sws_freeContext(c);
-
-		c =  libav::sws_getContext( _src_width, _src_height, 
-			_src_pix_fmt,
-			_dst_width, _dst_height, 
-			_dst_pix_fmt, SWS_BICUBIC, NULL, NULL, NULL );
-		if (!c)
-			throw std::runtime_error("cannot allocate SwsContext");
-
-}
 
 
 /*
@@ -211,3 +105,9 @@ std::deque<AVPixelFormat> codec::get_pixel_formats(){
 	return enc_formats;
 }
 */
+
+void codec::get_header_packets(std::deque<packet_ptr>& packets){
+	do_get_header_packets(packets);
+	BOOST_FOREACH(packet_ptr p,packets)
+		p->stream_header_data = true;
+}

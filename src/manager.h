@@ -32,6 +32,7 @@ public:
 	void finalize_codec_processor(camera_container* _container, codec_processor* _processor);
 private:
 	couchdb::manager cdb_manager;
+	archive_client a_client;
 	boost::asio::io_service internal_ioservice;
 	boost::shared_ptr<boost::asio::io_service::work> internal_ioservice_work_ptr;
 	boost::thread internal_thread;
@@ -75,6 +76,8 @@ private:
 
 	couchdb::document_ptr find_local_camera_document(const std::string& camera_unique_id);
 	couchdb::document_ptr main_doc;
+
+	void do_init_rpi_openmax_cam();
 };
 
 #endif//__manager_h__

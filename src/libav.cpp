@@ -25,6 +25,7 @@ typedef void	(*f_av_picture_copy)(AVPicture *dst, const AVPicture *src,	enum AVP
 typedef int		(*f_avpicture_layout)(const AVPicture *src, enum AVPixelFormat pix_fmt,	int width, int height,	unsigned char *dest, int dest_size);
 typedef void	(*f_avpicture_free)(AVPicture *picture);
 typedef void	(*f_av_init_packet)(AVPacket* pkt);
+typedef int		(*f_av_new_packet)(AVPacket *pkt,int size); 	
 typedef void	(*f_av_free_packet)(AVPacket *pkt);
 typedef const char* (*f_avcodec_get_name)(enum AVCodecID id);
 
@@ -38,6 +39,7 @@ typedef int (*f_sws_scale)(struct SwsContext *c, const uint8_t *const srcSlice[]
 	uint8_t *const dst[], const int dstStride[]);
 typedef void (*f_sws_freeContext)(struct SwsContext *swsContext);
 
+typedef void *(*f_av_malloc)(size_t size);
 typedef void (*f_av_free)(void *ptr);
 typedef void (*f_av_freep)(void *ptr);
 typedef AVFrame *(*f_av_frame_alloc)(void);
@@ -112,6 +114,7 @@ static f_avcodec_get_name _avcodec_get_name = 0;
 static f_avpicture_fill _avpicture_fill = 0;
 static f_av_picture_copy _av_picture_copy = 0;
 static f_av_init_packet _av_init_packet = 0;
+static f_av_new_packet _av_new_packet = 0;
 static f_av_free_packet _av_free_packet = 0;
 static f_avpicture_alloc _avpicture_alloc = 0;
 static f_avpicture_layout _avpicture_layout = 0;
@@ -123,6 +126,7 @@ static f_sws_freeContext _sws_freeContext = 0;
 
 
 static f_av_free _av_free = 0;
+static f_av_malloc _av_malloc = 0;
 static f_av_freep _av_freep = 0;
 static f_av_frame_alloc _av_frame_alloc = 0;
 static f_av_frame_free _av_frame_free = 0;
@@ -249,6 +253,10 @@ bool libav::initialize(std::string& error_message){
 		if (!_av_init_packet)
 			throw std::runtime_error("av_init_packet not found");
 
+		_av_new_packet = (f_av_new_packet)avcodec_lib_ptr->GetSym("av_new_packet");
+		if (!_av_new_packet)
+			throw std::runtime_error("av_new_packet not found");
+
 		_av_free_packet = (f_av_free_packet)avcodec_lib_ptr->GetSym("av_free_packet");
 		if (!_av_free_packet)
 			throw std::runtime_error("av_free_packet not found");
@@ -321,6 +329,9 @@ bool libav::initialize(std::string& error_message){
 			throw std::runtime_error("av_get_pix_fmt_name not found");
 
 
+		_av_malloc = (f_av_malloc)avutil_lib_ptr->GetSym("av_malloc");
+		if (!_av_malloc)
+			throw std::runtime_error("av_malloc not found");
 
 		_av_free = (f_av_free)avutil_lib_ptr->GetSym("av_free");
 		if (!_av_free)
@@ -539,6 +550,14 @@ void libav::av_init_packet(AVPacket* pkt){
 
 }
 
+int libav::av_new_packet(AVPacket *pkt,int size){
+	if (!_av_new_packet)
+		throw std::runtime_error("av_new_packet not found");
+	return _av_new_packet(pkt,size);
+
+}
+
+
 void libav::av_free_packet(AVPacket *pkt){
 	if (!_av_free_packet)
 		throw std::runtime_error("av_free_packet not found");
@@ -590,6 +609,12 @@ void libav::sws_freeContext(struct SwsContext *swsContext){
 	if (!_sws_freeContext)
 		throw std::runtime_error("sws_freeContext not found");
 	return _sws_freeContext(swsContext);
+}
+
+void* libav::av_malloc(size_t size){
+	if (!_av_malloc)
+		throw std::runtime_error("av_malloc not found");
+	return _av_malloc(size);
 }
 
 

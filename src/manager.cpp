@@ -19,6 +19,7 @@ const unsigned short SystemTcpPortNum = 5090;
 
 manager::manager(Utility::Options* options):
 	cdb_manager(options->conf_connection,options->conf_dbname),
+		a_client(cdb_manager),
 	local_devices_scan_timer(internal_ioservice),
 	u_acceptor(internal_ioservice),
 	s_acceptor(internal_ioservice)
@@ -56,6 +57,11 @@ manager::manager(Utility::Options* options):
 	start_acceptor(u_acceptor,UserTcpPortNum);
 	start_acceptor(s_acceptor,SystemTcpPortNum);
 
+
+#if defined(RPI)
+	internal_ioservice.post(boost::bind(&manager::do_init_rpi_openmax_cam,this));
+#endif
+
 	//starting thread
 	boost::system::error_code ec;
 	internal_thread = boost::thread(boost::bind(&manager::internal_thread_proc,this));
@@ -82,7 +88,7 @@ manager::~manager(){
 
 void manager::network_camera_doc_changed(const std::string& doc_id, const boost::property_tree::ptree& document_ptree){
 	std::string device_tags = document_ptree.get<std::string>("device_tags","");
-	if (device_tags.find(cprops::NetworkCameraTag))
+	if (device_tags.find(cprops::network_camera_tag))
 		internal_ioservice.post(boost::bind(&manager::i_thread_network_camera_doc_changed,this,doc_id,document_ptree));
 
 
@@ -97,7 +103,7 @@ void manager::i_thread_network_camera_doc_changed(std::string doc_id, boost::pro
 	couchdb::document_ptr d = cdb_manager.get_document(doc_id,error_message);
 	if (d){
 		try{
-			camera_container_ptr cptr(new camera_container(&cdb_manager, d,boost::bind(&manager::camera_container_stop_handler,this,_1)));
+			camera_container_ptr cptr(new camera_container(&cdb_manager,&a_client, d,boost::bind(&manager::camera_container_stop_handler,this,_1)));
 			cameras.push_back(cptr);
 		}
 		catch(std::runtime_error& ex){
@@ -130,9 +136,9 @@ void manager::check_database_and_start_network_cams(){
 		views_pt.clear();
 		views_pt.add<std::string>("_id","_design/vcapt");
 		views_pt.add<std::string>("language","javascript");
-		views_pt.add<std::string>("views.cameras.map","function(doc) {if(doc.device_tags){var s=doc.device_tags;if((s.indexOf('local_camera')!=-1)||(s.indexOf('network_camera')!=-1)) emit(null, doc);}}");
+		views_pt.add<std::string>("views.cameras.map","function(doc) {if(doc.device_tags){var s=doc.device_tags;if((s.indexOf('local_camera')!=-1)||(s.indexOf('rpi_camera')!=-1)||(s.indexOf('network_camera')!=-1)) emit(null, doc);}}");
 		views_pt.add<std::string>("views.network_cameras.map","function(doc) {if(doc.device_tags){var s=doc.device_tags;if(s.indexOf('network_camera')!=-1) emit(null, doc);}}");
-		views_pt.add<std::string>("views.local_cameras.map","function(doc) {if(doc.device_tags){var s=doc.device_tags;if(s.indexOf('local_camera')!=-1) emit(null, doc);}}");
+		views_pt.add<std::string>("views.local_cameras.map","function(doc) {if(doc.device_tags){var s=doc.device_tags;if((s.indexOf('local_camera')!=-1)||(s.indexOf('rpi_camera')!=-1)) emit(null, doc);}}");
 
 
 
@@ -180,7 +186,7 @@ void manager::check_database_and_start_network_cams(){
 					
 					if (main_doc->have_tag("network_camera")){
 						try{
- 							camera_container_ptr cptr(new camera_container(&cdb_manager,main_doc, boost::bind(&manager::camera_container_stop_handler,this,_1)));
+ 							camera_container_ptr cptr(new camera_container(&cdb_manager,&a_client,main_doc, boost::bind(&manager::camera_container_stop_handler,this,_1)));
  							cameras.push_back(cptr);
 						}
 						catch(std::runtime_error& ex){
@@ -374,15 +380,15 @@ void manager::do_videodev_appearance(const std::string& devname){
 		main_doc = find_local_camera_document(unique_id);
 		if (!main_doc){
 			main_doc = cdb_manager.create_document(error_message);
-			main_doc->add_tag(cprops::LocalCameraTag);
-			main_doc->set_property<std::string>(cprops::UniqueId,unique_id);
+			main_doc->add_tag(cprops::local_camera_tag);
+			main_doc->set_property<std::string>(cprops::unique_id,unique_id);
 		}
-		main_doc->set_property<std::string>(cprops::Url,devname);
+		main_doc->set_property<std::string>(cprops::url,devname);
 
 
 		//create container
 
-		camera_container_ptr cptr(new camera_container(&cdb_manager,main_doc,boost::bind(&manager::camera_container_stop_handler,this,_1)));
+		camera_container_ptr cptr(new camera_container(&cdb_manager,&a_client,main_doc,boost::bind(&manager::camera_container_stop_handler,this,_1)));
 		cameras.push_back(cptr);		
 	}
 	catch(std::runtime_error& ex){
@@ -686,7 +692,7 @@ couchdb::document_ptr manager::find_local_camera_document(const std::string& cam
 				boost::property_tree::ptree pt1 = v.second;
 				boost::property_tree::ptree cam_ptree = pt1.get_child("value",boost::property_tree::ptree());
 
-				std::string cam_unique_id = cam_ptree.get(cprops::UniqueId,"");
+				std::string cam_unique_id = cam_ptree.get(cprops::unique_id,"");
 				if (cam_unique_id == camera_unique_id){
 					std::string doc_id = cam_ptree.get("_id","");
 					return cdb_manager.get_document(doc_id,error_message);
@@ -695,6 +701,35 @@ couchdb::document_ptr manager::find_local_camera_document(const std::string& cam
 	return couchdb::document_ptr();
 }
 
+void manager::do_init_rpi_openmax_cam(){
+#if defined(RPI)
+	printf("try to initialize Raspberry-Pi camera\n");
 
+	try{
+		//TODO: try to read unique camera identifier
+		std::string unique_id = "rpi_openmax_camera";
+
+		//find/create document
+		std::string error_message;
+		main_doc = find_local_camera_document(unique_id);
+		if (!main_doc){
+			main_doc = cdb_manager.create_document(error_message);
+			main_doc->add_tag(cprops::rpi_camera_tag);
+			main_doc->set_property<std::string>(cprops::unique_id,unique_id);
+		}
+
+		//create container
+
+		camera_container_ptr cptr(new camera_container(&cdb_manager,&a_client,main_doc,boost::bind(&manager::camera_container_stop_handler,this,_1)));
+		cameras.push_back(cptr);		
+	}
+	catch(std::runtime_error& ex){
+		using namespace Utility;
+		Journal::Instance()->Write(ERR,DST_SYSLOG|DST_STDERR,"cannot start RPI-camera:%s",ex.what());
+	}
+
+
+#endif
+}
 
 

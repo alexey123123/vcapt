@@ -10,7 +10,7 @@ public:
 	~codec_libav();
 
 protected:
-	virtual packet_ptr do_process_frame(capturer::frame_ptr fptr);
+	virtual packet_ptr do_process_frame(frame_ptr fptr);
 	virtual void do_initilalize(const format& f, AVPixelFormat& _codec_pixfmt);
 	AVCodecContext* do_get_avcodec_context();
 private:

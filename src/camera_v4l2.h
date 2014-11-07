@@ -30,21 +30,21 @@ protected:
 
 	//new iface
 
-	void DoConnect3(const capturer::connect_parameters& params);
-	void DoDisconnect();
-	frame_ptr DoGetFrame3(boost::chrono::steady_clock::time_point last_frame_tp);
-	void DoReturnFrame3(boost::chrono::steady_clock::time_point tp, void* opaque);
-	format DoGetCurrentFormat() const 
+	void do_connect(const capturer::connect_parameters& params);
+	void do_disconnect();
+	frame_ptr do_get_frame(boost::chrono::steady_clock::time_point last_frame_tp);
+	void do_return_frame(boost::chrono::steady_clock::time_point tp, void* opaque);
+	format do_get_current_format() const 
 		{return selected_format;};
-	frame_size DoGetFramesize()
+	frame_size do_get_framesize()
 		{return current_frame_size;}
 
-	void DoSetFramesize(const frame_size& fsize);
+	void do_set_framesize(const frame_size& fsize);
 
-	void DoStopStreaming();
+	void do_stop_streaming();
 
-	definition DoGetDefinition() const;
-	capabilities DoGetCapabilities() const;
+	definition do_get_definition() const;
+	capabilities do_get_capabilities() const;
 
 private:
 	int fd;

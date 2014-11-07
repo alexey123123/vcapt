@@ -80,7 +80,7 @@ public:
 		std::string slot_name; //for v4l2 devices
 	};
 	definition get_definition() const
-		{return DoGetDefinition();};
+		{return do_get_definition();};
 
 	struct format{
 		AVPixelFormat ffmpeg_pixfmt;
@@ -109,19 +109,39 @@ public:
 	};
 
 	format get_current_format() const
-		{return DoGetCurrentFormat();};
+		{return do_get_current_format();};
 	frame_size get_current_framesize()
-		{return DoGetFramesize();};
-
-
-
+		{return do_get_framesize();};
 	void set_framesize(const frame_size& fsize);
 
+
+	struct capabilities{
+
+		enum _flags{
+			f_start_stop_streaming	= 1 << 0
+		};
+
+		unsigned int flags;
+
+		//поддерживаемые Controls и их текущие значения
+		//std::deque<CameraControl> controls;
+
+		capabilities();
+
+		bool start_stop_streaming_supported() const
+			{return (flags & f_start_stop_streaming) > 0;};
+	};
+	capabilities get_capabilities()
+		{return do_get_capabilities();};
+
 	void stop_streaming()
-		{ DoStopStreaming();};
+		{ do_stop_streaming();};
+	void start_streaming()
+		{ do_start_streaming();};
 
 	enum state{
 		st_Initialization,
+		st_NotInitialized,
 		st_InitializationError,
 		st_ConnectError,	//for network cams
 		st_CaptureError,
@@ -131,64 +151,40 @@ public:
 	state get_state() const ;
 
 
-	struct frame{
-		AVFrame* avframe;
-		boost::chrono::steady_clock::time_point tp;
 
-		boost::shared_array<unsigned char> frame_data;
-		void* opaque_data;
-
-		capturer* _capturer;
-
-		state capturer_state;
-
-		frame(capturer* c = 0);
-		~frame();
-	};
-	typedef boost::shared_ptr<frame> frame_ptr;
 	frame_ptr get_frame(boost::chrono::steady_clock::time_point last_frame_tp);
-
+	void return_frame(boost::chrono::steady_clock::time_point tp, void* opaque);
 
 protected:
 
 
-	struct capabilities{
-
-		enum _flags{
-			f_stop_streaming	= 1 << 0
-		};
-
-		unsigned int flags;
-
-		//поддерживаемые Controls и их текущие значения
-		//std::deque<CameraControl> controls;
-
-		capabilities();
-	};
 
 
-	virtual void DoConnect3(const connect_parameters& params) = 0;
-	virtual void DoDisconnect() = 0;
+
+	virtual void do_connect(const connect_parameters& params) = 0;
+	virtual void do_disconnect() = 0;
 	//frame operations
-	virtual frame_ptr DoGetFrame3(boost::chrono::steady_clock::time_point last_frame_tp) = 0;
-	virtual void DoReturnFrame3(boost::chrono::steady_clock::time_point tp, void* opaque){};
+	virtual frame_ptr do_get_frame(boost::chrono::steady_clock::time_point last_frame_tp) = 0;
+	virtual void do_return_frame(boost::chrono::steady_clock::time_point tp, void* opaque){};
 
-	virtual format DoGetCurrentFormat() const = 0;
-	virtual void DoSetFramesize(const frame_size& fsize) = 0;
-	virtual frame_size DoGetFramesize() = 0;
-	virtual definition DoGetDefinition() const = 0;
-	virtual capabilities DoGetCapabilities() const = 0;
+	virtual format do_get_current_format() const = 0;
+	virtual void do_set_framesize(const frame_size& fsize) = 0;
+	virtual frame_size do_get_framesize() = 0;
+	virtual definition do_get_definition() const = 0;
+	virtual capabilities do_get_capabilities() const = 0;
 
-	virtual void DoStopStreaming() {};
+	//for cameras, which have internal streaming processes
+	virtual void do_start_streaming() {};
+	virtual void do_stop_streaming() {};
 
 	virtual void on_state_change(state old_state,state new_state){};
 
-
+	
 private:
 	
 	AVFrame* convert_pix_fmt(AVFrame* src,AVPixelFormat dst_pix_fmt,std::string& error_message);
 
-	void return_frame(boost::chrono::steady_clock::time_point tp, void* opaque);
+	
 
 
 	boost::atomic<state> capturer_state;

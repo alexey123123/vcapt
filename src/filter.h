@@ -21,6 +21,7 @@ public:
 	~filter();
 
 	AVFrame* apply_to_frame(AVFrame* src, const std::string& filter_string);//throw std::runtime_error
+	AVFrame* draw_text_in_center(AVFrame* src, const std::string& text_string);//throw std::runtime_error
 
 
 	void clean();

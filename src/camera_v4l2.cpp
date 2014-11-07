@@ -172,7 +172,7 @@ std::string v4l2_pisxftm_fourcc_to_str2(unsigned int v4l2_pixfmt);
 
 
 
-bool do_start_streaming(int fd, int buffers_count, std::string& error_message){
+bool v4ls_do_start_streaming(int fd, int buffers_count, std::string& error_message){
 
 	try{
 #if defined(LinuxPlatform)
@@ -204,7 +204,7 @@ bool do_start_streaming(int fd, int buffers_count, std::string& error_message){
 	return false;
 
 }
-bool do_stop_streaming(int fd, std::string& error_message){
+bool do_stop_streaming_v4l2(int fd, std::string& error_message){
 #if defined(LinuxPlatform)
 	if (fd != -1){
 		int _type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -223,12 +223,13 @@ camera_v4l2::camera_v4l2(const capturer::connect_parameters& _cp,state_change_ha
 		dequeued_buffers_count(0),
 		streaming_state(vs_stopped)
 {
-		v4l2_device_capabilities.flags = capabilities::f_stop_streaming;
+		//v4l2_device_capabilities.flags = capabilities::f_start_stop_streaming;
+	v4l2_device_capabilities.flags = 0;
 }
 
 
 camera_v4l2::~camera_v4l2(){
-	DoDisconnect();
+	do_disconnect();
 }
 
 
@@ -460,9 +461,9 @@ bool camera_v4l2::try_enum_formats(std::deque<format>& _formats){
 
 }
 
-void camera_v4l2::DoDisconnect(){
+void camera_v4l2::do_disconnect(){
 	boost::unique_lock<boost::recursive_mutex> l1(internal_mutex);
-	DoStopStreaming();
+	do_stop_streaming();
 
 	close_fd();
 }
@@ -532,7 +533,7 @@ bool camera_v4l2::read_v4l2_device_definition(const std::string& devname,int fd,
 }
 
 
-void camera_v4l2::DoConnect3(const capturer::connect_parameters& params){
+void camera_v4l2::do_connect(const capturer::connect_parameters& params){
 	#if defined(LinuxPlatform)
 
 	boost::unique_lock<boost::recursive_mutex> l1(internal_mutex);
@@ -740,11 +741,11 @@ void camera_v4l2::unmap_buffers(){
 
 
 
-void camera_v4l2::DoSetFramesize(const frame_size& fsize){
+void camera_v4l2::do_set_framesize(const frame_size& fsize){
 
 
 
-	DoStopStreaming();
+	do_stop_streaming();
 
 	boost::unique_lock<boost::recursive_mutex> l1(internal_mutex);
 
@@ -874,7 +875,7 @@ void camera_v4l2::DoSetFramesize(const frame_size& fsize){
 
 	if (streaming_state != vs_streaming){
 		std::string error_message;
-		if (!do_start_streaming(fd,n_buffers,error_message))
+		if (!v4ls_do_start_streaming(fd,n_buffers,error_message))
 			throw std::runtime_error("start streaming error:");
 
 		std::cout<<"streaming started"<<std::endl;
@@ -967,7 +968,7 @@ bool wait_for_frame(int fd,std::string& error_message){
 
 
 
-void camera_v4l2::DoReturnFrame3(boost::chrono::steady_clock::time_point tp, void* opaque){
+void camera_v4l2::do_return_frame(boost::chrono::steady_clock::time_point tp, void* opaque){
 
 #if defined(LinuxPlatform)
 	boost::unique_lock<boost::recursive_mutex> l1(internal_mutex);
@@ -1001,14 +1002,14 @@ void camera_v4l2::DoReturnFrame3(boost::chrono::steady_clock::time_point tp, voi
 
 }
 
-capturer::frame_ptr camera_v4l2::DoGetFrame3(boost::chrono::steady_clock::time_point last_frame_tp){
+frame_ptr camera_v4l2::do_get_frame(boost::chrono::steady_clock::time_point last_frame_tp){
 	if (streaming_state != vs_streaming)
-		return capturer::frame_ptr();
+		return frame_ptr();
 
 	boost::unique_lock<boost::recursive_mutex> l1(internal_mutex);
 
 	if (streaming_state != vs_streaming)
-		return capturer::frame_ptr();
+		return frame_ptr();
 
 	if (last_frame_tp != boost::chrono::steady_clock::time_point())
 		if (last_frame)
@@ -1016,7 +1017,7 @@ capturer::frame_ptr camera_v4l2::DoGetFrame3(boost::chrono::steady_clock::time_p
 				return last_frame;
 
 
-	last_frame = capturer::frame_ptr();
+	last_frame = frame_ptr();
 	int try_count = 0;
 	while (try_count < 3){
 
@@ -1030,16 +1031,16 @@ capturer::frame_ptr camera_v4l2::DoGetFrame3(boost::chrono::steady_clock::time_p
 	return last_frame;
 }
 
-capturer::frame_ptr camera_v4l2::get_frame3(){
+frame_ptr camera_v4l2::get_frame3(){
 
 
 	if (streaming_state != vs_streaming)
-		return capturer::frame_ptr();
+		return frame_ptr();
 	
 	
 
 
-	capturer::frame_ptr f3ptr;
+	frame_ptr f3ptr;
 
 		
 
@@ -1104,9 +1105,8 @@ capturer::frame_ptr camera_v4l2::get_frame3(){
 			//printf("dqbuf:ret:%d,buf.index:%d,buf.bytesused:%d,start:%08X\n",ret,buf.index,buf.bytesused,(int)buffers[buf.index].start);
 
 			f3ptr = frame_ptr(new frame());
-			f3ptr->opaque_data = b;
-			f3ptr->_capturer = this;
 			f3ptr->tp = boost::chrono::steady_clock::now();
+			f3ptr->dcb = boost::bind(&capturer::return_frame,this,f3ptr->tp,b);
 
 			//construct avframe
 			//std::cout<<"construct avframe (buf:"<<b->index<<")...";
@@ -1183,7 +1183,7 @@ std::string v4l2_pisxftm_fourcc_to_str2(unsigned int v4l2_pixfmt){
 }
 
 
-void camera_v4l2::DoStopStreaming(){
+void camera_v4l2::do_stop_streaming(){
 
 
 	
@@ -1194,16 +1194,18 @@ void camera_v4l2::DoStopStreaming(){
 
 
 		boost::unique_lock<boost::recursive_mutex> l1(internal_mutex);
+		std::cout<<"internal_mutex locked"<<std::endl;
 		last_frame = frame_ptr();
 		l1.unlock();
 
 		if (!wait_all_extracted_buffers(boost::chrono::seconds(1000)))
 			throw std::runtime_error("cannot wait extracted buffers");
 
+		std::cout<<"all extracted buffers returned"<<std::endl;
 
 		l1.lock();
 		std::string error_message;
-		if (!do_stop_streaming(fd,error_message)){
+		if (!do_stop_streaming_v4l2(fd,error_message)){
 			using namespace Utility;
 			Journal::Instance()->Write(ERR,DST_STDERR|DST_SYSLOG,"streaming stop error:%s",error_message.c_str());
 		}
@@ -1217,9 +1219,9 @@ void camera_v4l2::DoStopStreaming(){
 
 }
 
-capturer::definition camera_v4l2::DoGetDefinition() const{
+capturer::definition camera_v4l2::do_get_definition() const{
 	return v4l2_device_definition;
 }
-capturer::capabilities camera_v4l2::DoGetCapabilities() const{
+capturer::capabilities camera_v4l2::do_get_capabilities() const{
 	return v4l2_device_capabilities;
 }

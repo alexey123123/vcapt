@@ -19,7 +19,7 @@ camera_opencv::~camera_opencv(){
 	cap = cv::VideoCapture();
 }
 
-capturer::definition camera_opencv::DoGetDefinition() const{
+capturer::definition camera_opencv::do_get_definition() const{
 	capturer::definition _definition;
 	capturer::connect_parameters cp = get_connect_parameters();
 	if (cp.connection_string==std::string(WindowsCameraDevname)){
@@ -33,7 +33,7 @@ capturer::definition camera_opencv::DoGetDefinition() const{
 	}
 	return _definition;
 }
-capturer::capabilities camera_opencv::DoGetCapabilities() const{
+capturer::capabilities camera_opencv::do_get_capabilities() const{
 	capabilities caps;
 	caps.flags = 0;
 
@@ -41,7 +41,7 @@ capturer::capabilities camera_opencv::DoGetCapabilities() const{
 }
 
 
-void camera_opencv::DoConnect3(const capturer::connect_parameters& params){
+void camera_opencv::do_connect(const capturer::connect_parameters& params){
 	boost::unique_lock<boost::mutex> l1(internal_mutex);
 
 	try{
@@ -81,7 +81,7 @@ void camera_opencv::DoConnect3(const capturer::connect_parameters& params){
 
 }
 
-void camera_opencv::DoDisconnect(){
+void camera_opencv::do_disconnect(){
 	boost::unique_lock<boost::mutex> l1(internal_mutex);
 
 	cap = cv::VideoCapture();
@@ -90,16 +90,16 @@ void camera_opencv::DoDisconnect(){
 
 
 
-capturer::frame_ptr camera_opencv::DoGetFrame3(boost::chrono::steady_clock::time_point last_frame_tp){
+frame_ptr camera_opencv::do_get_frame(boost::chrono::steady_clock::time_point last_frame_tp){
 
 	if (!cap.isOpened())
-		return capturer::frame_ptr();
+		return frame_ptr();
 
 	boost::unique_lock<boost::mutex> l1(internal_mutex);
 
 
 
-	capturer::frame_ptr fptr;
+	frame_ptr fptr;
 
 	try{
 		cv::Mat mat1;
@@ -108,7 +108,7 @@ capturer::frame_ptr camera_opencv::DoGetFrame3(boost::chrono::steady_clock::time
 
 		//convert to BGR24
 
-		fptr = capturer::frame_ptr(new capturer::frame());
+		fptr = frame_ptr(new frame());
 		fptr->tp = boost::chrono::steady_clock::now();
 
 		unsigned int frame_data_size = mat1.cols * mat1.rows * 3;// 3 bytes per pixel
@@ -137,18 +137,18 @@ capturer::frame_ptr camera_opencv::DoGetFrame3(boost::chrono::steady_clock::time
 
 }
 
-capturer::format camera_opencv::DoGetCurrentFormat() const {
+capturer::format camera_opencv::do_get_current_format() const {
 	return current_format;
 }
 
-void camera_opencv::DoSetFramesize(const frame_size& fsize){
+void camera_opencv::do_set_framesize(const frame_size& fsize){
 	boost::unique_lock<boost::mutex> l1(internal_mutex);
 	cap.set(CV_CAP_PROP_FRAME_WIDTH, fsize.width);
 	cap.set(CV_CAP_PROP_FRAME_HEIGHT, fsize.height);
 	current_framesize = fsize;
 }
 
-frame_size camera_opencv::DoGetFramesize(){
+frame_size camera_opencv::do_get_framesize(){
 	return current_framesize;
 }
 

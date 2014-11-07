@@ -14,7 +14,7 @@ public:
 	~codec();
 
 	struct format{
-		std::string		name;
+		AVCodecID		codec_id;
 		AVPixelFormat	input_pixfmt;	//input pixel format (preffered format)
 		frame_size		fsize;			//input framesize
 		int				bitrate;
@@ -23,32 +23,28 @@ public:
 	const format& get_format()
 			{return _format;};
 
-	
-	
+		
 	static boost::shared_ptr<codec> create(const format& f);
 
-
-
-	std::deque<AVPixelFormat> get_pixel_formats();
-
-	packet_ptr process_frame(capturer::frame_ptr fptr);
+	packet_ptr process_frame(frame_ptr fptr);
 
 	//need for ffmpeg based streams
 	AVCodecContext* get_avcodec_context()
 		{return do_get_avcodec_context();};
 
 	//some codecs may contain header data inside (codec_rpi)
-// 	buffer_ptr get_header_of_stream()
-// 		{return do_get_header_of_stream();};
+	void get_header_packets(std::deque<packet_ptr>& packets);
+		
+		
 
 protected:
 
-	virtual packet_ptr do_process_frame(capturer::frame_ptr fptr) = 0;
+	virtual packet_ptr do_process_frame(frame_ptr fptr) = 0;
 	virtual void do_initilalize(const format& f, AVPixelFormat& _codec_pixfmt) = 0;
 	virtual AVCodecContext* do_get_avcodec_context() = 0;
-	//virtual buffer_ptr do_get_header_of_stream() = 0;
+	virtual void do_get_header_packets(std::deque<packet_ptr>& packets){};
 
-	AVFrame* resize_and_convert_format(AVFrame* src,int dst_width,int dst_height, AVPixelFormat dst_pixfmt,std::string& error_message);
+	
 private:
 
 	format _format;
@@ -56,28 +52,9 @@ private:
 
 
 	boost::chrono::steady_clock::time_point encoder_start_tp;
+	frame_helper f_helper;
 
-	struct __resize_context{
-		int src_width;
-		int src_height;
-		AVPixelFormat src_pix_fmt;
-		int dst_width;
-		int dst_height;
-		AVPixelFormat dst_pix_fmt;
 
-		SwsContext* c;
-		__resize_context();
-		~__resize_context();
-
-		void update(
-			int _src_width,
-			int _src_height,
-			PixelFormat _src_pix_fmt,
-			int _dst_width,
-			int _dst_height,
-			PixelFormat _dst_pix_fmt);
-
-	} resize_context;
 	
 };
 typedef boost::shared_ptr<codec> codec_ptr;

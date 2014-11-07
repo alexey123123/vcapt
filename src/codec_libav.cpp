@@ -14,7 +14,7 @@ AVCodecContext* codec_libav::do_get_avcodec_context(){
 	return av_codec_context;
 }
 
-packet_ptr codec_libav::do_process_frame(capturer::frame_ptr fptr){
+packet_ptr codec_libav::do_process_frame(frame_ptr fptr){
 	packet_ptr ret_packet(new packet());
 	ret_packet->frame_tp = fptr->tp;
 
@@ -28,13 +28,15 @@ packet_ptr codec_libav::do_process_frame(capturer::frame_ptr fptr){
 	ret_packet->p.duration = 0;
 	//avframe_to_encode->quality = 1;
 
-
-	fptr->avframe->pts = boost::chrono::duration_cast<boost::chrono::milliseconds>(fptr->tp - codec_start_tp).count();
+	AVFrame fr;
+	memcpy(&fr,fptr->avframe,sizeof(AVFrame));
+	fr.pts = boost::chrono::duration_cast<boost::chrono::milliseconds>(fptr->tp - codec_start_tp).count();
 
 	int got_packet;
-	libav::avcodec_encode_video2(av_codec_context, &ret_packet->p,fptr->avframe,&got_packet);
+	libav::avcodec_encode_video2(av_codec_context, &ret_packet->p,&fr,&got_packet);
 	if (!got_packet)
 		ret_packet = packet_ptr();
+
 
 	return ret_packet;
 
@@ -54,23 +56,14 @@ AVPixelFormat correct_deprecated_fmt(AVPixelFormat in_fmt){
 
 
 void codec_libav::do_initilalize(const format& f, AVPixelFormat& _codec_pixfmt){
-	AVCodecID codec_id = AV_CODEC_ID_NONE;
-	if (f.name=="h264")
-		codec_id = AV_CODEC_ID_H264;
-	if (f.name=="vp8")
-		codec_id = AV_CODEC_ID_VP8;
-	if (f.name=="vp9")
-		codec_id = AV_CODEC_ID_VP9;
-	if (f.name=="mjpeg")
-		codec_id = AV_CODEC_ID_MJPEG;
 
-	if (codec_id==AV_CODEC_ID_NONE)
-		throw std::runtime_error("unknown codec ("+f.name+")");
+	if (f.codec_id==AV_CODEC_ID_NONE)
+		throw std::runtime_error("unknown codec");
 
 
-	av_codec = libav::avcodec_find_encoder(codec_id);
+	av_codec = libav::avcodec_find_encoder(f.codec_id);
 	if (av_codec == 0)
-		throw std::runtime_error("cannot find encoder ("+f.name+")");
+		throw std::runtime_error("cannot find encoder");
 
 	const AVPixelFormat* pix_fmt = av_codec->pix_fmts;
 	const AVPixelFormat* selected_fmt = 0;
@@ -97,6 +90,9 @@ void codec_libav::do_initilalize(const format& f, AVPixelFormat& _codec_pixfmt){
 	av_codec_context = libav::avcodec_alloc_context3(av_codec);
 	if (!av_codec_context)
 		throw std::runtime_error("avcodec_alloc_context3 error");
+
+	av_codec_context->debug = 1;
+
 	av_codec_context->codec_id = av_codec->id;
 	av_codec_context->bit_rate = f.bitrate;
 	/* Resolution must be a multiple of two. */
@@ -117,7 +113,7 @@ void codec_libav::do_initilalize(const format& f, AVPixelFormat& _codec_pixfmt){
 	switch(av_codec->id){
 	case AV_CODEC_ID_H264:
 		av_codec_context->profile= FF_PROFILE_H264_BASELINE;
-		//av_codec_context->level = 4;
+		av_codec_context->level = 41	;
 		//libav::av_opt_set(av_codec_context->priv_data, "preset", "fast", 0);
 		//libav::av_opt_set(av_codec_context->priv_data, "vprofile", "baseline", 0);
 

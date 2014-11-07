@@ -52,6 +52,12 @@ public:
 	void restart_connection()
 		{do_disconnect_camera_device();};
 
+	enum streaming_state{
+		ss_started,
+		ss_stopped
+	};
+	void change_streaming_state(streaming_state ss);
+
 protected:
 
 
@@ -88,7 +94,7 @@ private:
 
 	void do_change_framesize(frame_size fs);
 
-	void get_set_capture_options();
+	streaming_state current_streaming_state;
 
 
 
